@@ -10,6 +10,36 @@ from docx.enum.style import WD_STYLE_TYPE
 from docx.oxml import parse_xml
 from docx.oxml.ns import nsdecls, qn
 
+from app.common.skills import HARD_SKILLS
+
+
+_CAMEL_BOUNDARY_RE = re.compile(r"[a-z][A-Z]")
+
+# Brand/contact names that are not in the skills taxonomy but must keep their
+# internal capital (A14 renders them; A13 must not split them).
+_EXTRA_CANONICAL_TERMS = frozenset({
+    "LinkedIn",
+    "DevOps",
+    "OpenAPI",
+    "WordPress",
+    "SharePoint",
+})
+
+# Only terms with an intentional lower-to-upper transition need protection.
+# Longest first so "GitHub Actions" wins over "GitHub".
+CANONICAL_TECH_TERMS = tuple(sorted(
+    {name for name in HARD_SKILLS if _CAMEL_BOUNDARY_RE.search(name)}
+    | set(_EXTRA_CANONICAL_TERMS),
+    key=len,
+    reverse=True,
+))
+TECH_TERM_RE = re.compile(
+    r"(?<![A-Za-z])("
+    + "|".join(re.escape(term) for term in CANONICAL_TECH_TERMS)
+    + r")(?![A-Za-z])",
+    re.I,
+)
+
 
 class DocxExporter:
     """
@@ -105,6 +135,14 @@ class DocxExporter:
             else:
                 proj_text = self._apply_rewrites(proj_raw, rewritten_bullets)
                 self._add_entries(doc, proj_text, trailing_space=False)
+
+        cert_raw = sections.get("certifications", {}).get("raw", "")
+        if cert_raw:
+            self._add_list_section(doc, "CERTIFICATIONS", cert_raw)
+
+        lang_raw = sections.get("languages", {}).get("raw", "")
+        if lang_raw:
+            self._add_list_section(doc, "LANGUAGES", lang_raw)
 
         buf = io.BytesIO()
         doc.save(buf)
@@ -219,7 +257,7 @@ class DocxExporter:
             url = c["linkedin"]
             full_url = url if url.startswith("http") else f"https://{url}"
             parts.append((full_url, url))
-        elif c.get("github"):
+        if c.get("github"):
             url = c["github"]
             full_url = url if url.startswith("http") else f"https://{url}"
             parts.append((full_url, url))
@@ -419,7 +457,7 @@ class DocxExporter:
 
             # FIX: Ensure missing spaces from AI rewrites or PDF gluing are patched
             text = re.sub(r"\b(platform)(using)\b", r"\1 \2", text, flags=re.I)
-            text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text) # safely split "WordWord" 
+            text = self._split_unknown_camel_case(text)
             text = re.sub(r"\s{2,}", " ", text).strip()
 
             should_merge = False
@@ -479,6 +517,14 @@ class DocxExporter:
         if trailing_space and doc.paragraphs:
             doc.paragraphs[-1].paragraph_format.space_after = Pt(4)
 
+    def _add_list_section(self, doc, title: str, text: str):
+        """Render a simple section (certifications, languages) line by line."""
+        lines = self._clean_lines(text)
+        if not lines:
+            return
+        self._heading(doc, title)
+        self._add_entries(doc, "\n".join(lines), trailing_space=False)
+
     # ---------------------------------------------------------------- #
     # skills
     # ---------------------------------------------------------------- #
@@ -536,6 +582,31 @@ class DocxExporter:
                 and not self.PLACEHOLDER_RE.search(ai_opt["ai_output"])
             ):
                 text = text.replace(orig, ai_opt["ai_output"])
+        return text
+
+    def _split_unknown_camel_case(self, text: str) -> str:
+        """Insert spaces in glued CamelCase without corrupting known tech names.
+
+        ``JavaScript``, ``PostgreSQL``, ``MongoDB`` and friends keep their
+        spelling; unknown joins such as ``WordWord`` still become
+        ``Word Word`` so accidental PDF gluing remains readable.
+        """
+        protected_text, protected = self._protect_canonical_terms(text)
+        split_text = re.sub(r"([a-z])([A-Z])", r"\1 \2", protected_text)
+        return self._restore_canonical_terms(split_text, protected)
+
+    def _protect_canonical_terms(self, text: str) -> tuple[str, list[str]]:
+        protected: list[str] = []
+
+        def replace(match: re.Match) -> str:
+            protected.append(match.group(0))
+            return f"\x00{len(protected) - 1}\x00"
+
+        return TECH_TERM_RE.sub(replace, text), protected
+
+    def _restore_canonical_terms(self, text: str, protected: list[str]) -> str:
+        for index, term in enumerate(protected):
+            text = text.replace(f"\x00{index}\x00", term)
         return text
 
     def _clean_lines(self, text: str) -> list[str]:

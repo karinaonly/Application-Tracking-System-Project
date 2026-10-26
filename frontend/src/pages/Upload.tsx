@@ -30,6 +30,7 @@ export default function UploadPage({ navigate, addToast }: PageProps) {
   const [resumes, setResumes] = useState<api.ResumeSummary[]>([])
   const [selectedJobId, setSelectedJobId] = useState<string>()
   const inputRef = useRef<HTMLInputElement>(null)
+  const activeJobId = selectedJobId ?? jobs[0]?.id
 
   useEffect(() => {
     Promise.all([api.listJobs(), api.listResumes()]).then(([loadedJobs, loadedResumes]) => {
@@ -54,9 +55,9 @@ export default function UploadPage({ navigate, addToast }: PageProps) {
     setAnalyzing(true)
     addToast("info", "Analyzing your resume against the selected job description…")
     try {
-      const analysis = await api.analyzeResume(uploaded.id, selectedJobId)
+      const analysis = await api.analyzeResume(uploaded.id, activeJobId)
       api.saveLastAnalysis(analysis); api.saveLastResumeId(uploaded.id)
-      api.saveLastResumeMeta(uploaded.name, jobs.find(job => job.id === selectedJobId)?.title)
+      api.saveLastResumeMeta(uploaded.name, jobs.find(job => job.id === activeJobId)?.title)
       navigate("analysis")
     } catch (error) { addToast("error", error instanceof Error ? error.message : "Could not analyze resume") }
     finally { setAnalyzing(false) }
@@ -136,11 +137,11 @@ export default function UploadPage({ navigate, addToast }: PageProps) {
           <div className="bg-surface rounded-2xl border border-edge p-5 mb-6">
             <p className="font-semibold text-navy text-sm mb-4">Select a Job Description to Analyze Against</p>
             <div className="grid gap-2 mb-4">
-              {jobs.map((j, i) => (
-                <label key={j.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${selectedJobId === j.id || (!selectedJobId && i === 0) ? "border-teal bg-teal/5" : "border-edge hover:border-navy/20"}`}>
-                  <input type="radio" name="job" className="sr-only" checked={selectedJobId === j.id || (!selectedJobId && i === 0)} onChange={() => setSelectedJobId(j.id)} />
-                  <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-colors ${selectedJobId === j.id || (!selectedJobId && i === 0) ? "border-teal" : "border-edge"}`}>
-                    {(selectedJobId === j.id || (!selectedJobId && i === 0)) && <div className="w-2 h-2 rounded-full bg-teal" />}
+              {jobs.map((j) => (
+                <label key={j.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${activeJobId === j.id ? "border-teal bg-teal/5" : "border-edge hover:border-navy/20"}`}>
+                  <input type="radio" name="job" className="sr-only" checked={activeJobId === j.id} onChange={() => setSelectedJobId(j.id)} />
+                  <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-colors ${activeJobId === j.id ? "border-teal" : "border-edge"}`}>
+                    {activeJobId === j.id && <div className="w-2 h-2 rounded-full bg-teal" />}
                   </div>
                   <div>
                     <p className="text-sm font-medium text-navy">{j.title}</p>
@@ -193,7 +194,7 @@ export default function UploadPage({ navigate, addToast }: PageProps) {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5">
                     <p className="font-medium text-navy text-sm truncate">{r.filename}</p>
-                    <FileTypeBadge type={r.type} />
+                    <FileTypeBadge type={r.file_type} />
                   </div>
                     <p className="text-xs text-dim">{new Date(r.created_at).toLocaleDateString()}</p>
                 </div>

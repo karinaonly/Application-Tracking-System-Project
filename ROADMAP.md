@@ -79,13 +79,15 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   *Fix:* accept both prefixes (or validate by shape rather than prefix), have `/auth/ai-status` call the same check instead of duplicating it, set `timeout=` on the client, and add a live-key smoke test as the exit criterion for every C item.
   ✅ *Done 2026-10-26 (🟢 verified with real data): added a shared `resolve_ai_config` that validates the key by shape, wired both `AIRewriter` and `/auth/ai-status` to it, and passed a timeout to the client. A real resume + job analysis produced 6/6 Groq rewrites with zero fallbacks. Added `tests/test_ai_config.py` and `scripts/ai_smoke_test.py`.*
 
-- [ ] **A13 (P0): Exporter splits CamelCase and corrupts tech names** · `export/docx_exporter.py`
+- [x] **A13 (P0): Exporter splits CamelCase and corrupts tech names** · `export/docx_exporter.py`
   Found 2026-10-23 in a real export: `JavaScript` → `"Java Script"`, `PostgreSQL` → `"Postgre SQL"`, `MongoDB` → `"Mongo DB"`, `GitHub` → `"Git Hub"`.
   *Fix:* replace the generic CamelCase splitter with an allowlist of canonical tech spellings; only split words that aren't known terms.
+  ✅ *Done 2026-10-26: the splitter now protects canonical terms derived from `common/skills.py` (plus LinkedIn, DevOps, OpenAPI, WordPress, SharePoint) and only splits unknown joins such as `WordWord`. Added `tests/test_docx_exporter.py`. A real export of your parsed resume keeps GraphQL, JavaScript, TypeScript, PostgreSQL, Node.js and Next.js intact with no `"Graph QL"`-style splits.*
 
-- [ ] **A14 (P1): Exporter drops content it can't place** · `export/docx_exporter.py`
+- [x] **A14 (P1): Exporter drops content it can't place** · `export/docx_exporter.py`
   Found 2026-10-23: GitHub is discarded whenever LinkedIn is also present, and certifications and languages are never emitted at all.
   *Fix:* give each contact channel its own slot, and add certifications/languages sections when the parsed resume has them.
+  ✅ *Done 2026-10-26: LinkedIn and GitHub are now independent header slots, and `CERTIFICATIONS` / `LANGUAGES` render from `sections["certifications"]["raw"]` and `sections["languages"]["raw"]`. Covered by `tests/test_docx_exporter.py`. Your current resume only has GitHub and has no certifications/languages sections, so the new sections are fixture-tested until a real resume contains them.*
 
 - [ ] **A15 (P0): Section parser mis-reads common resume layouts** · `parser/section_parser.py`
   Found 2026-10-23, verified against real inputs:
@@ -109,9 +111,10 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   Found 2026-10-23: viewing analysis A and exporting can produce analysis B, because export resolves "most recent" server-side.
   *Fix:* accept an `analysis_id` on export, or export from a stored per-job version (ties to D3).
 
-- [ ] **A19 (P1): Upload page highlights a job but submits none** · `frontend/src/pages/Upload.tsx`
+- [x] **A19 (P1): Upload page highlights a job but submits none** · `frontend/src/pages/Upload.tsx`
   Found 2026-10-23: the selected job card is visual only — `analyze` is called without `job_id`, so the highlighted job is not the one used.
   *Fix:* send the selected job id, and preselect it when arriving from a job (ties to D6).
+  ✅ *Done 2026-10-26: `activeJobId` (the selected job, falling back to the first job) is sent to `analyzeResume`, used for the saved resume metadata, and drives the highlighted/checked job card. Also fixed the stale `ResumeSummary.file_type` reference that made `tsc` fail. `tsc --noEmit` and `bun run build` pass; a UI click-through is still needed to mark this 🟢.*
 
 - [ ] **A20 (P2): `addToast` is recreated every render** · `frontend/src/App.tsx`
   Found 2026-10-23: it is passed into effect dependency arrays, so effects can re-run and re-fetch or re-toast.
@@ -369,15 +372,15 @@ Counts verified against the item list on 2026-10-23. (F14 is unused; numbering j
 
 | Section | Items | Done |
 |---|---|---|
-| A. Bugs | 21 | 3 |
+| A. Bugs | 21 | 6 |
 | B. Scoring | 11 | 7 |
 | C. AI Rewriter | 13 | 10 |
 | D. Features | 8 | 0 |
 | E. Security & Config | 6 | 0 |
 | F. Hygiene | 17 | 2 |
-| **Total** | **76** | **22** |
+| **Total** | **76** | **25** |
 
-Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrites from Groq, no fallbacks). The rest of the C section remains unit-tested only (🟡) until each item is exercised individually.
+Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrites from Groq, no fallbacks) and A13 (a real resume export keeps its tech spellings). A14's new certifications/languages sections are fixture-tested because the current real resume has neither; A19 is build-verified but still needs a UI click-through to become 🟢. The rest of the C section remains unit-tested only (🟡) until each item is exercised individually.
 
 ---
 
@@ -385,6 +388,7 @@ Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrit
 
 | Date | Item(s) | What changed | Notes |
 |---|---|---|---|
+| 2026-10-26 | A13, A14, A19 | Exporter now protects canonical tech spellings when splitting glued CamelCase, renders LinkedIn and GitHub as independent header slots, and writes `CERTIFICATIONS` / `LANGUAGES` sections when parsed. Upload page now sends the selected job id to `analyze`. Added 6 exporter regression tests. | 95 backend tests pass; `tsc --noEmit` is clean (fixed the stale `r.type` reference) and the Vite build passes. A13 confirmed with a real resume export; A14's certification/language path is fixture-tested only because the current resume has neither; A19 needs a UI click-through to be 🟢. |
 | 2026-10-26 | A12, C3 verified; counts corrected | Set `AI_MODEL=openai/gpt-oss-120b` in `.env` and `settings.py`, restored the Gemini base URL, reduced the worst-case AI wait (`ai_timeout_seconds=20`, no SDK retries), added a logged and actionable cause for failed AI calls with the key redacted, and surfaced that cause in the Analysis panel. Ran a real resume + job analysis: 6/6 rewrites from Groq, no fallbacks. | Progress counts corrected to 22 done (A 3, B 7, C 10, F 2) from the checked boxes in this file; 24 would require ticking two more completed items. 89 tests pass. |
 | 2026-10-26 | A12, C3 | Added a shared `resolve_ai_config` (shape-based key validation plus provider inference for `auto`), wired both `AIRewriter` and `/auth/ai-status` to it, added the client timeout/retry settings, and fixed JSON-mode polarity so only `openai` sends `response_format`. Added `tests/test_ai_config.py` and `scripts/ai_smoke_test.py`. | 86 tests pass. The smoke test exits 0 (`source=groq`, guard `passed`) with `AI_MODEL=openai/gpt-oss-120b`; the currently configured `llama-3.3-70b-versatile` returns `model_not_found` on Groq, so `AI_MODEL` needs updating. No key is logged. |
 | 2026-10-23 | A9, C3 reopened; A12–A21, E5–E6, F16–F18 added; counts corrected | Full-code review. Added 15 items (10 bugs, 2 security, 3 hygiene), reopened 2 items marked done that fail verification, and fixed the totals (61 → 76 items, 22 → 20 done). Added a verification legend and a warning on Section C. | Reviewed every backend/frontend file; ran `pytest` (79 tests, 2 failing), `tsc --noEmit` (1 error), `vite build` (passes because it skips `tsc`), and probed parser/exporter/metric behaviour with real inputs. No source files changed. |
