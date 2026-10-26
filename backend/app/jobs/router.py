@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 from uuid import UUID
 
@@ -27,7 +27,11 @@ def create_job(data: JobCreate, user: User = Depends(get_current_user), session:
 
 @router.post("/from-url", response_model=JobResponse)
 async def create_from_url(data: JobFromUrl, user: User = Depends(get_current_user), session: Session = Depends(get_session)):
-    scraped = await scrape_job_url(data.url)
+    try:
+        scraped = await scrape_job_url(data.url)
+    except ValueError as exc:
+        # E6: SSRF-guarded fetch -- surface the block instead of storing junk
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     job = JobDescription(
         user_id=user.id,
         title=scraped.get("title", "Scraped Job"),

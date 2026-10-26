@@ -14,7 +14,7 @@ from app.analyzer.grammar_checker import GrammarChecker
 from app.analyzer.ai_rewriter import AIRewriter
 from app.analyzer.scoring import compute_overall
 from app.export.docx_exporter import DocxExporter
-from app.common.exceptions import ResumeNotFoundError
+from app.common.exceptions import JobNotFoundError, ResumeNotFoundError
 
 # How many flagged bullets we'll attempt to send for AI rewriting per analysis.
 # AIRewriter.MAX_BULLETS_PER_CALL caps what actually goes in the API request;
@@ -93,10 +93,12 @@ class ResumeService:
         }
         target_role = ""
         if job_id:
+            # A17: never analyze against another user's job (or a nonexistent one)
             job = self.session.get(JobDescription, job_id)
-            if job:
-                target_role = job.title
-                kw_res = self.kw_engine.analyze(resume.raw_text, job.raw_text)
+            if not job or job.user_id != user_id:
+                raise JobNotFoundError()
+            target_role = job.title
+            kw_res = self.kw_engine.analyze(resume.raw_text, job.raw_text)
 
         overall, weights_used = compute_overall({
             "ats": ats_res["score"],

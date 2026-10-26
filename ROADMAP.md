@@ -103,9 +103,10 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   Found 2026-10-23 (extends A9/A11): `"Cut latency by 2.5x"`, `"Reduced build time to 3.5 hours"`, `"Served 1.5 million users"` all return no metric.
   *Fix:* allow decimals and magnitude words (million/thousand) in the metric regex, while keeping the version/year exclusions.
 
-- [ ] **A17 (P1): Analyze accepts a `job_id` without an ownership check** · `resume/service.py`, `resume/router.py`
+- [x] **A17 (P1): Analyze accepts a `job_id` without an ownership check** · `resume/service.py`, `resume/router.py`
   Found 2026-10-23: a user can analyze against another user's job by guessing an id.
   *Fix:* verify `job.user_id == current_user.id` before use, and return 404 otherwise. (Depends on the E3 decision — moot if auth is removed.)
+  ✅ *Done 2026-10-26: `service.analyze` now raises the existing `JobNotFoundError` (404) when the job is missing or owned by someone else, instead of silently analyzing without keywords. Covered in `tests/test_resume_service.py`.*
 
 - [ ] **A18 (P1): Export uses the latest analysis, not the selected one** · `resume/service.py`, `frontend/src/pages/Upload.tsx`
   Found 2026-10-23: viewing analysis A and exporting can produce analysis B, because export resolves "most recent" server-side.
@@ -273,13 +274,15 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
 
 ## E. Security & Config
 
-- [ ] **E1 (P1): Default JWT secret** · `config/settings.py`
+- [x] **E1 (P1): Default JWT secret** · `config/settings.py`
   `jwt_secret = "local-secret-key"`.
   *Fix:* require it from `.env`, and fail on startup if it's unset.
+  ✅ *Done 2026-10-26: the insecure default is gone; `validate_security_settings` runs in the app lifespan and rejects an empty or <32-char secret. Verified live: an empty `JWT_SECRET` makes uvicorn abort with "Application startup failed". `backend/.env.example` documents it.*
 
-- [ ] **E2 (P1): CORS wide open** · `main.py`
+- [x] **E2 (P1): CORS wide open** · `main.py`
   `allow_origins=["*"]` with `allow_credentials=True`.
   *Fix:* allow only the frontend origin (e.g. `http://localhost:5173`).
+  ✅ *Done 2026-10-26: CORS is now an explicit allowlist (`CORS_ORIGINS` env, defaults to localhost:8443/5173). Verified live: preflight from `localhost:8443` returns 200 with the origin echoed; `http://evil.example` is rejected with 400. If you preview the frontend from another origin, add it to `CORS_ORIGINS`.*
 
 - [ ] **E3 (P2): Decide whether auth is needed at all**
   Single-user local app. Either remove auth to simplify, or keep it and harden it.
@@ -287,13 +290,15 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
 - [ ] **E4 (P2): Resume data privacy note**
   Resume text is sent to the Gemini/OpenAI API. Add a visible notice in the UI and an option to disable AI rewriting.
 
-- [ ] **E5 (P1): SQL echo logs resume contents** · `.env`, `config/settings.py`
+- [x] **E5 (P1): SQL echo logs resume contents** · `.env`, `config/settings.py`
   Found 2026-10-23: `echo=True` in development prints every statement with bound values, so full resume text and user rows land in the console/logs.
   *Fix:* default echo to off and opt in per session via an env var, never in a committed `.env`.
+  ✅ *Done 2026-10-26: `db_echo` defaults to `False` (opt in with `DB_ECHO=true`). Verified live: after the change the backend log has zero `sqlalchemy.engine` lines, even across DB-touching requests.*
 
-- [ ] **E6 (P1): SSRF in the job-description fetch** · `jobs/router.py`, `jobs/scraper.py`
+- [x] **E6 (P1): SSRF in the job-description fetch** · `jobs/router.py`, `jobs/scraper.py`
   Found 2026-10-23: an arbitrary user-supplied URL is fetched server-side.
   *Fix:* allowlist schemes and hosts, and block private/loopback IP ranges (including after redirects). This is separate from D4, which is about reliability.
+  ✅ *Done 2026-10-26: `is_safe_public_url` enforces http(s), no credentials, and public resolved IPs only; redirects are followed manually so every hop is re-checked, and violations return 400. Covered in `tests/test_scraper.py` (loopback, private ranges, metadata IP, IPv6 loopback, public-IP allow).*
 
 ---
 
@@ -330,17 +335,19 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   A refresh loses context.
   *Fix:* fetch the analysis by ID from the API.
 
-- [ ] **F9 (P2): Hardcoded absolute path** · `.vscode/settings.json`
+- [x] **F9 (P2): Hardcoded absolute path** · `.vscode/settings.json`
   `d:\Projects\Application Tracking System - Personal\...` breaks on any other machine.
   *Fix:* use a relative path (`${workspaceFolder}/backend/venv/Scripts/python.exe`).
+  ✅ *Done 2026-10-26: interpreter and `extraPaths` now use `${workspaceFolder}`.*
 
 - [ ] **F10 (P2): No DB migrations**
   `create_all` won't alter existing tables when models change.
   *Fix:* add Alembic once the schema settles.
 
-- [ ] **F11 (P3): Setup script is a full-code snapshot**
+- [x] **F11 (P3): Setup script is a full-code snapshot**
   Fine as a backup, but the source of truth should be a git repo.
   *Fix:* `git init`, add a `.gitignore` (`.env`, `*.db`, `uploads/`, `venv/`, `node_modules/`).
+  ✅ *Done 2026-10-26: git repo initialized on `main` with a root `.gitignore` covering `.env`, `*.db`, uploads, `venv/`, `node_modules/`, `dist/`; baseline commit `8890a61`. The snapshot itself was deleted (F18). The small `setup_project.py` copier remains, now redundant with `git clone` — safe to delete later.*
 
 - [ ] **F12 (P3): Section parser is 716 lines with no structure tests**
   Split into smaller functions or classes and cover with tests (ties to F4).
@@ -352,17 +359,20 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
 - [x] **F15 (P1): AI rewriter regression coverage** · `backend/tests/test_ai_rewriter.py`, `backend/tests/test_claim_guard.py`
   ✅ *Done 2026-10-08: Added mocked retry, failure-state, per-variant, implied-skill, and proper-noun coverage.*
 
-- [ ] **F16 (P0): `build` never type-checks** · `frontend/package.json`, `frontend/src/pages/Upload.tsx`
+- [x] **F16 (P0): `build` never type-checks** · `frontend/package.json`, `frontend/src/pages/Upload.tsx`
   Found 2026-10-23: `build` is only `vite build`. `tsc --noEmit` fails with `Upload.tsx(196,44): Property 'type' does not exist on type 'ResumeSummary'`, yet the production build succeeds — so type errors ship.
   *Fix:* make `build` run `tsc --noEmit && vite build`, and fix the `FileTypeBadge` prop type (derive it from `filename`, or add `type` to `ResumeSummary`).
+  ✅ *Done 2026-10-26 (with A19): the stale `r.type` reference was fixed and `build` is now `tsc --noEmit && vite build`. Verified: `bun run build` runs the type check first and passes.*
 
-- [ ] **F17 (P3): Stray 0-byte database at the repo root** · `database.py`
+- [x] **F17 (P3): Stray 0-byte database at the repo root** · `database.py`
   Found 2026-10-23: the relative SQLite path created `./ats_resume_fixer.db` (0 bytes) next to the real `backend/ats_resume_fixer.db`.
   *Fix:* resolve the DB path relative to the backend package, delete the stray file, and add `*.db` to `.gitignore` (F11).
+  ✅ *Done 2026-10-26: the default `database_url` is now anchored to the backend package directory (still overridable via `DATABASE_URL`), the stray 0-byte root DB is deleted, and `*.db` is in the root `.gitignore`.*
 
-- [ ] **F18 (P2): Setup script overwrites source unconditionally** · `backend/setup_project_latest.py`
+- [x] **F18 (P2): Setup script overwrites source unconditionally** · `backend/setup_project_latest.py`
   Found 2026-10-23: it is a stale full-code snapshot that rewrites files on every run and still references the old Gemini integration.
   *Fix:* delete it once git is in place (F11), and keep git as the source of truth.
+  ✅ *Done 2026-10-26: deleted via `git rm` (recoverable from history at commit `8890a61`).*
 
 ---
 
@@ -372,15 +382,15 @@ Counts verified against the item list on 2026-10-23. (F14 is unused; numbering j
 
 | Section | Items | Done |
 |---|---|---|
-| A. Bugs | 21 | 6 |
+| A. Bugs | 21 | 7 |
 | B. Scoring | 11 | 7 |
 | C. AI Rewriter | 13 | 10 |
 | D. Features | 8 | 0 |
-| E. Security & Config | 6 | 0 |
-| F. Hygiene | 17 | 2 |
-| **Total** | **76** | **25** |
+| E. Security & Config | 6 | 4 |
+| F. Hygiene | 17 | 7 |
+| **Total** | **76** | **35** |
 
-Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrites from Groq, no fallbacks) and A13 (a real resume export keeps its tech spellings). A14's new certifications/languages sections are fixture-tested because the current real resume has neither; A19 is build-verified but still needs a UI click-through to become 🟢. The rest of the C section remains unit-tested only (🟡) until each item is exercised individually.
+Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrites from Groq, no fallbacks), A13 (a real resume export keeps its tech spellings), E1 (empty `JWT_SECRET` aborts startup), E2 (allowed preflight 200 / foreign origin 400), and E5 (zero SQL-echo lines in the live log). A14's new certifications/languages sections are fixture-tested because the current real resume has neither; A19 is build-verified but still needs a UI click-through to become 🟢. The rest of the C section remains unit-tested only (🟡) until each item is exercised individually.
 
 ---
 
@@ -388,6 +398,7 @@ Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrit
 
 | Date | Item(s) | What changed | Notes |
 |---|---|---|---|
+| 2026-10-26 | A17, E1, E2, E5, E6, F9, F11, F16, F17, F18 | Analyze now 404s on missing/foreign `job_id`; JWT secret is required at startup (no insecure default); CORS is an explicit origin allowlist; SQL echo is off by default; the job-URL fetch has an SSRF guard (scheme/credentials/public-IP checks, redirects re-checked, 400 on violation). Frontend `build` runs `tsc` first, `.vscode` paths use `${workspaceFolder}`, the default DB path is anchored to `backend/`, the stray root DB and `setup_project_latest.py` are deleted, and `backend/.env.example` was added. | 107 tests pass; `bun run build` (with `tsc`) passes. Verified live on the restarted server: empty `JWT_SECRET` → startup abort; allowed preflight → 200 with ACAO, `http://evil.example` → 400; zero SQL-echo lines across DB-touching requests. Counts: A 7, E 4, F 7 → 35 done. |
 | 2026-10-26 | A13, A14, A19 | Exporter now protects canonical tech spellings when splitting glued CamelCase, renders LinkedIn and GitHub as independent header slots, and writes `CERTIFICATIONS` / `LANGUAGES` sections when parsed. Upload page now sends the selected job id to `analyze`. Added 6 exporter regression tests. | 95 backend tests pass; `tsc --noEmit` is clean (fixed the stale `r.type` reference) and the Vite build passes. A13 confirmed with a real resume export; A14's certification/language path is fixture-tested only because the current resume has neither; A19 needs a UI click-through to be 🟢. |
 | 2026-10-26 | A12, C3 verified; counts corrected | Set `AI_MODEL=openai/gpt-oss-120b` in `.env` and `settings.py`, restored the Gemini base URL, reduced the worst-case AI wait (`ai_timeout_seconds=20`, no SDK retries), added a logged and actionable cause for failed AI calls with the key redacted, and surfaced that cause in the Analysis panel. Ran a real resume + job analysis: 6/6 rewrites from Groq, no fallbacks. | Progress counts corrected to 22 done (A 3, B 7, C 10, F 2) from the checked boxes in this file; 24 would require ticking two more completed items. 89 tests pass. |
 | 2026-10-26 | A12, C3 | Added a shared `resolve_ai_config` (shape-based key validation plus provider inference for `auto`), wired both `AIRewriter` and `/auth/ai-status` to it, added the client timeout/retry settings, and fixed JSON-mode polarity so only `openai` sends `response_format`. Added `tests/test_ai_config.py` and `scripts/ai_smoke_test.py`. | 86 tests pass. The smoke test exits 0 (`source=groq`, guard `passed`) with `AI_MODEL=openai/gpt-oss-120b`; the currently configured `llama-3.3-70b-versatile` returns `model_not_found` on Groq, so `AI_MODEL` needs updating. No key is logged. |

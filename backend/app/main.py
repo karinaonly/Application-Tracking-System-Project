@@ -3,12 +3,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.config.database import init_db
+from app.config.settings import get_settings, validate_security_settings
 from app.auth.router import router as auth_router
 from app.resume.router import router as resume_router
 from app.jobs.router import router as jobs_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # E1: refuse to serve with an insecure/missing JWT secret
+    validate_security_settings(get_settings())
     init_db()
     print("✅ SQLite database initialized.")
     print("🚀 ATS Resume Fixer API is live on http://127.0.0.1:8000")
@@ -24,7 +27,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    # E2: explicit allowlist instead of "*"; override via CORS_ORIGINS in .env
+    allow_origins=get_settings().cors_origin_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
