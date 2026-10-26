@@ -99,9 +99,10 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   - A single-line contact containing an email becomes the whole line as `name`.
   *Fix:* anchor school extraction on the degree line, parse contact lines field-by-field, detect inline section headers, and never treat a line containing an email/phone as a name. Add fixtures (ties to F4/F12).
 
-- [ ] **A16 (P1): Decimal and unit-scaled metrics are not counted** · `analyzer/bullet_analyzer.py`
+- [x] **A16 (P1): Decimal and unit-scaled metrics are not counted** · `analyzer/bullet_analyzer.py`
   Found 2026-10-23 (extends A9/A11): `"Cut latency by 2.5x"`, `"Reduced build time to 3.5 hours"`, `"Served 1.5 million users"` all return no metric.
   *Fix:* allow decimals and magnitude words (million/thousand) in the metric regex, while keeping the version/year exclusions.
+  ✅ *Done 2026-10-26: `_is_technology_version` no longer treats every decimal as a version. A decimal is a version only in a tech/version-word context; an explicit `k/m/b/x` suffix or a following quantity/magnitude word (`3.5 hours`, `1.5 million users`) makes it a metric. Covered by `tests/test_bullet_analyzer.py` (`test_decimal_and_unit_scaled_metrics_count` plus a new version-exclusion case).*
 
 - [x] **A17 (P1): Analyze accepts a `job_id` without an ownership check** · `resume/service.py`, `resume/router.py`
   Found 2026-10-23: a user can analyze against another user's job by guessing an id.
@@ -117,13 +118,15 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   *Fix:* send the selected job id, and preselect it when arriving from a job (ties to D6).
   ✅ *Done 2026-10-26: `activeJobId` (the selected job, falling back to the first job) is sent to `analyzeResume`, used for the saved resume metadata, and drives the highlighted/checked job card. Also fixed the stale `ResumeSummary.file_type` reference that made `tsc` fail. `tsc --noEmit` and `bun run build` pass; a UI click-through is still needed to mark this 🟢.*
 
-- [ ] **A20 (P2): `addToast` is recreated every render** · `frontend/src/App.tsx`
+- [x] **A20 (P2): `addToast` is recreated every render** · `frontend/src/App.tsx`
   Found 2026-10-23: it is passed into effect dependency arrays, so effects can re-run and re-fetch or re-toast.
   *Fix:* wrap in `useCallback`, or expose it through a stable ref/context.
+  ✅ *Done 2026-10-26: `navigate`, `addToast`, and `dismissToast` are wrapped in `useCallback` with stable identity.*
 
-- [ ] **A21 (P2): Settings saves are fake** · `frontend/src/pages/Settings.tsx`
+- [x] **A21 (P2): Settings saves are fake** · `frontend/src/pages/Settings.tsx`
   Found 2026-10-23: profile and password buttons report success without calling the API; plan and initials are hardcoded.
   *Fix:* wire them to real endpoints, or remove the controls. Also fix the Groq-incompatible provider message.
+  ✅ *Done 2026-10-26: real endpoints added — `PATCH /auth/me` (update full_name) and `POST /auth/change-password` (verifies the current password, min 8 chars, rehashes with passlib). Settings now saves the name and changes the password through them; the fake "Free Plan · 3 analyses/month" / "Upgrade to Pro" / hardcoded "AK" initials are gone (initials derive from the real name). The provider message is now provider-neutral. Covered in `tests/test_auth_service.py`; verified live: PATCH persists, wrong current password → 400, old password rejected after change (401), new password logs in.*
 
 ---
 
@@ -319,9 +322,10 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   Start with parser tests using 5 to 10 anonymized sample resumes as fixtures, then analyzer unit tests.
   🟡 *Updated 2026-10-08: `backend/tests/` now has 79 tests (bullets, keywords, scoring, ats_checker, claim guard, ai_rewriter). Parser tests still missing.*
 
-- [ ] **F5 (P1): Fake fallback scores in the UI** · `frontend/src/pages/Analysis.tsx`
+- [x] **F5 (P1): Fake fallback scores in the UI** · `frontend/src/pages/Analysis.tsx`
   `?? 68`, `?? 58`, `?? 71` show made-up numbers when data is missing.
   *Fix:* show an empty state or "N/A" instead.
+  ✅ *Done 2026-10-26: the numeric fallbacks are gone — missing scores render "N/A" (ATS/keyword/bullet cards), and the page shows a "No analysis to show" empty state with a link to Upload when there is no analysis at all, instead of a zeroed-out report.*
 
 - [ ] **F6 (P2): Analyzers constructed per request** · `resume/service.py`
   A new spellchecker and other analyzers are built each time.
@@ -352,9 +356,10 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
 - [ ] **F12 (P3): Section parser is 716 lines with no structure tests**
   Split into smaller functions or classes and cover with tests (ties to F4).
 
-- [ ] **F13 (P2): Dashboard shows hardcoded demo data** · `frontend/src/pages/Dashboard.tsx`
+- [x] **F13 (P2): Dashboard shows hardcoded demo data** · `frontend/src/pages/Dashboard.tsx`
   `demoRecentFiles` ("Alex_Kim_Resume_v4.pdf"…) is the initial state, and the stat cards ("Average ATS Score 68", "Analyses Completed 9") are hardcoded.
   *Fix:* show real values or an empty state, and remove the demo arrays.
+  ✅ *Done 2026-10-26: demo arrays and "Welcome back, Alex" removed. Stat cards compute from `listResumes()`/`listJobs()` (resumes, jobs, average ATS across latest analyses, analyses count) with N/A when nothing is analyzed; empty states for the table and score progress; the welcome name comes from `getMe()`. The fake re-analyze/download toasts were replaced: export actually downloads the tailored DOCX, "view report" loads that resume's real analysis into the Analysis page, and re-analyze opens the Upload page.*
 
 - [x] **F15 (P1): AI rewriter regression coverage** · `backend/tests/test_ai_rewriter.py`, `backend/tests/test_claim_guard.py`
   ✅ *Done 2026-10-08: Added mocked retry, failure-state, per-variant, implied-skill, and proper-noun coverage.*
@@ -382,13 +387,13 @@ Counts verified against the item list on 2026-10-23. (F14 is unused; numbering j
 
 | Section | Items | Done |
 |---|---|---|
-| A. Bugs | 21 | 7 |
+| A. Bugs | 21 | 10 |
 | B. Scoring | 11 | 7 |
 | C. AI Rewriter | 13 | 10 |
 | D. Features | 8 | 0 |
 | E. Security & Config | 6 | 4 |
-| F. Hygiene | 17 | 7 |
-| **Total** | **76** | **35** |
+| F. Hygiene | 17 | 9 |
+| **Total** | **76** | **40** |
 
 Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrites from Groq, no fallbacks), A13 (a real resume export keeps its tech spellings), E1 (empty `JWT_SECRET` aborts startup), E2 (allowed preflight 200 / foreign origin 400), and E5 (zero SQL-echo lines in the live log). A14's new certifications/languages sections are fixture-tested because the current real resume has neither; A19 is build-verified but still needs a UI click-through to become 🟢. The rest of the C section remains unit-tested only (🟡) until each item is exercised individually.
 
@@ -398,6 +403,7 @@ Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrit
 
 | Date | Item(s) | What changed | Notes |
 |---|---|---|---|
+| 2026-10-26 | A16, A20, A21, F5, F13 | Honesty batch: decimal/unit metrics (`2.5x`, `3.5 hours`, `1.5 million`) now count while version/year exclusions hold; `navigate`/`addToast` are stable `useCallback`s; Settings saves are real (`PATCH /auth/me` + `POST /auth/change-password` with current-password verification), fake plan/upgrade/hardcoded initials removed, provider message made provider-neutral; Analysis page shows N/A and a no-analysis empty state instead of fake fallback scores; Dashboard computes real stats from the API with empty states, and its export/report/re-analyze buttons do what they claim. | 112 backend tests pass (5 new: auth service profile/password + metric cases); `bun run build` (with `tsc`) passes. Verified live on the restarted server: PATCH `/auth/me` persists the name, wrong current password → 400, change-password → 204 with old password rejected (401) and new password logging in. Counts: A 10, F 9 → 40 done. |
 | 2026-10-26 | A17, E1, E2, E5, E6, F9, F11, F16, F17, F18 | Analyze now 404s on missing/foreign `job_id`; JWT secret is required at startup (no insecure default); CORS is an explicit origin allowlist; SQL echo is off by default; the job-URL fetch has an SSRF guard (scheme/credentials/public-IP checks, redirects re-checked, 400 on violation). Frontend `build` runs `tsc` first, `.vscode` paths use `${workspaceFolder}`, the default DB path is anchored to `backend/`, the stray root DB and `setup_project_latest.py` are deleted, and `backend/.env.example` was added. | 107 tests pass; `bun run build` (with `tsc`) passes. Verified live on the restarted server: empty `JWT_SECRET` → startup abort; allowed preflight → 200 with ACAO, `http://evil.example` → 400; zero SQL-echo lines across DB-touching requests. Counts: A 7, E 4, F 7 → 35 done. |
 | 2026-10-26 | A13, A14, A19 | Exporter now protects canonical tech spellings when splitting glued CamelCase, renders LinkedIn and GitHub as independent header slots, and writes `CERTIFICATIONS` / `LANGUAGES` sections when parsed. Upload page now sends the selected job id to `analyze`. Added 6 exporter regression tests. | 95 backend tests pass; `tsc --noEmit` is clean (fixed the stale `r.type` reference) and the Vite build passes. A13 confirmed with a real resume export; A14's certification/language path is fixture-tested only because the current resume has neither; A19 needs a UI click-through to be 🟢. |
 | 2026-10-26 | A12, C3 verified; counts corrected | Set `AI_MODEL=openai/gpt-oss-120b` in `.env` and `settings.py`, restored the Gemini base URL, reduced the worst-case AI wait (`ai_timeout_seconds=20`, no SDK retries), added a logged and actionable cause for failed AI calls with the key redacted, and surfaced that cause in the Analysis panel. Ran a real resume + job analysis: 6/6 rewrites from Groq, no fallbacks. | Progress counts corrected to 22 done (A 3, B 7, C 10, F 2) from the checked boxes in this file; 24 would require ticking two more completed items. 89 tests pass. |

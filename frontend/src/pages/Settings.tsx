@@ -44,17 +44,42 @@ export default function Settings({ addToast }: PageProps) {
   const inputCls = "w-full px-4 py-3 rounded-xl border border-edge bg-warm text-sm text-navy placeholder-dim outline-none focus:border-2 focus:border-navy transition-all"
   const disabledCls = "w-full px-4 py-3 rounded-xl border border-edge bg-off text-sm text-mid cursor-not-allowed"
 
-  const saveProfile = () => {
+  const saveProfile = async () => {
+    if (!name.trim()) { addToast("error", "Name cannot be empty"); return }
     setSavingProfile(true)
-    setTimeout(() => { setSavingProfile(false); addToast("info", "Profile editing is not available in the backend yet.") }, 300)
+    try {
+      const updated = await api.updateMe({ full_name: name.trim() })
+      setName(updated.full_name)
+      addToast("success", "Profile updated")
+    } catch (error) {
+      addToast("error", error instanceof Error ? error.message : "Could not update profile")
+    } finally {
+      setSavingProfile(false)
+    }
   }
 
-  const savePw = () => {
+  const savePw = async () => {
     if (!currentPw || !newPw) { addToast("error", "Please fill in both password fields"); return }
     if (newPw.length < 8) { addToast("error", "New password must be at least 8 characters"); return }
     setSavingPw(true)
-    setTimeout(() => { setSavingPw(false); addToast("info", "Password changes are not available in the backend yet.") }, 300)
+    try {
+      await api.changePassword({ current_password: currentPw, new_password: newPw })
+      setCurrentPw("")
+      setNewPw("")
+      addToast("success", "Password updated")
+    } catch (error) {
+      addToast("error", error instanceof Error ? error.message : "Could not update password")
+    } finally {
+      setSavingPw(false)
+    }
   }
+
+  const initials = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part[0]?.toUpperCase() ?? "")
+    .join("") || "?"
 
   return (
     <div className="min-h-screen bg-warm">
@@ -69,17 +94,16 @@ export default function Settings({ addToast }: PageProps) {
           <Section title="Profile Information">
             <div className="flex items-center gap-5 mb-6 pb-6 border-b border-edge">
               <div className="w-16 h-16 rounded-2xl bg-navy flex items-center justify-center shrink-0">
-                <span className="text-white text-xl font-bold font-display">AK</span>
+                <span className="text-white text-xl font-bold font-display">{initials}</span>
               </div>
               <div>
                 <p className="font-semibold text-navy">{name}</p>
                 <p className="text-sm text-mid">{email}</p>
                 <div className="flex items-center gap-1.5 mt-1">
                   <div className="w-1.5 h-1.5 rounded-full bg-teal" />
-                  <span className="text-xs text-teal font-medium">Free Plan · 3 analyses/month</span>
+                  <span className="text-xs text-teal font-medium">Local instance · your data stays on this machine</span>
                 </div>
               </div>
-              <button className="ml-auto text-xs text-teal font-medium hover:underline">Upgrade to Pro →</button>
             </div>
             <div className="space-y-4">
               <Field label="Full Name">
@@ -143,7 +167,7 @@ export default function Settings({ addToast }: PageProps) {
                     ? aiStatus.configured
                       ? `Connected — ${aiStatus.model} rewrites active`
                       : aiStatus.reason === "invalid_format"
-                      ? "Invalid key format — expected sk-..."
+                      ? "Provider key rejected — check its format in backend/.env"
                       : aiStatus.reason === "quota_exhausted"
                       ? "AI quota exhausted — using rule-based fallback"
                       : aiStatus.reason === "model_unavailable"

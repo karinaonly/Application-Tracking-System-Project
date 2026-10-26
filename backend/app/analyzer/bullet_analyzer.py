@@ -17,8 +17,14 @@ _TECH_TERMS = {term.lower() for canonical, aliases in HARD_SKILLS.items() for te
 _QUANTITY_NOUNS = (
     "member(?:s)?|person|people|user(?:s)?|client(?:s)?|endpoint(?:s)?|table(?:s)?|"
     "project(?:s)?|service(?:s)?|module(?:s)?|page(?:s)?|feature(?:s)?|week(?:s)?|"
-    "month(?:s)?|day(?:s)?|hour(?:s)?"
+    "month(?:s)?|day(?:s)?|hour(?:s)?|million|billion|thousand|hundred"
 )
+_QUANTITY_CONTEXT_RE = re.compile(
+    rf"(?:\s*-\s*|\s+)(?:[A-Za-z][\w.+#/-]*\s+)*(?:{_QUANTITY_NOUNS})\b",
+    re.I,
+)
+_MAGNITUDE_SUFFIX_RE = re.compile(r"[kmbx]$", re.I)
+_VERSION_WORD_RE = re.compile(r"^(?:v(?:er(?:sion)?)?)$", re.I)
 _MONEY_RE = re.compile(r"(?:[$₱]\s*|PHP\s+)[\d,]+(?:\.\d+)?[kmb]?\b", re.I)
 _PERCENT_RE = re.compile(r"(?<![A-Za-z0-9.])\d+(?:\.\d+)?\s*%")
 _NUMBER_RE = re.compile(
@@ -33,14 +39,22 @@ def _previous_word(text: str, start: int) -> str:
 
 
 def _is_technology_version(text: str, match: re.Match[str]) -> bool:
+    """A16: a decimal is only a version in a tech context -- `2.5x` metrics count."""
     value = match.group(0)
     numeric = re.sub(r"[kmbx]$", "", value, flags=re.I)
     if re.fullmatch(r"(?:19|20)\d{2}", numeric):
         return True
-    if "." in numeric:
-        return True
     previous = _previous_word(text, match.start())
-    return previous in _TECH_TERMS
+    if previous in _TECH_TERMS or _VERSION_WORD_RE.match(previous):
+        return True
+    # An explicit magnitude suffix is a quantity ("2.5x", "3k users"), never a version.
+    if _MAGNITUDE_SUFFIX_RE.search(value):
+        return False
+    if "." in numeric:
+        # No suffix: a decimal is a metric when a quantity/magnitude word follows
+        # ("3.5 hours", "1.5 million users"); otherwise treat it as a version.
+        return not _QUANTITY_CONTEXT_RE.match(text[match.end():])
+    return False
 
 
 def _extract_metrics(text: str) -> list[str]:

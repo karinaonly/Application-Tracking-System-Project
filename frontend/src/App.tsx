@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import type { Page, ToastMsg } from "./types"
 import Navbar from "./components/Navbar"
 import Toast from "./components/Toast"
@@ -22,18 +22,19 @@ export default function App() {
     api.getMe().then(() => navigate("dashboard")).catch(() => api.clearToken())
   }, [])
 
-  const navigate = (p: Page) => {
+  // A20: stable identity so consumers' effects don't re-fire every render
+  const navigate = useCallback((p: Page) => {
     setPage(p)
     window.scrollTo({ top: 0, behavior: "smooth" })
-  }
+  }, [])
 
-  const addToast = (type: ToastMsg["type"], text: string) => {
+  const addToast = useCallback((type: ToastMsg["type"], text: string) => {
     const id = Math.random().toString(36).slice(2)
     setToasts(prev => [...prev, { id, type, text }])
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500)
-  }
+  }, [])
 
-  const dismissToast = (id: string) => setToasts(prev => prev.filter(t => t.id !== id))
+  const dismissToast = useCallback((id: string) => setToasts(prev => prev.filter(t => t.id !== id)), [])
 
   const handleLogin = (token: string) => {
     api.setToken(token)

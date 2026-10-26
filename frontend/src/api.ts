@@ -133,6 +133,14 @@ export async function getMe(): Promise<User> {
   return request<User>("/auth/me")
 }
 
+export async function updateMe(data: { full_name: string }): Promise<User> {
+  return request<User>("/auth/me", { method: "PATCH", body: JSON.stringify(data) })
+}
+
+export async function changePassword(data: { current_password: string; new_password: string }): Promise<void> {
+  return request<void>("/auth/change-password", { method: "POST", body: JSON.stringify(data) })
+}
+
 export async function getAIStatus(): Promise<AIStatus> {
   return request<AIStatus>("/auth/ai-status")
 }

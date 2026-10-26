@@ -93,8 +93,20 @@ class MetricTests(unittest.TestCase):
             "Deployed on EC2 and S3",
             "Migrated to Next.js 14",
             "Upgraded to Node 18",
+            "Upgraded to version 2.3 of the API",
         ):
             self.assertFalse(ba._check_bullet(text, "Experience")["has_metrics"], text)
+
+    def test_decimal_and_unit_scaled_metrics_count(self):
+        # A16: decimals and magnitude words are metrics, not versions.
+        for text in (
+            "Cut latency by 2.5x",
+            "Reduced build time to 3.5 hours",
+            "Served 1.5 million users",
+            "Handled 2.3 thousand requests daily",
+            "Improved throughput by 1.8x",
+        ):
+            self.assertTrue(ba._check_bullet(text, "Experience")["has_metrics"], text)
 
 
 if __name__ == "__main__":

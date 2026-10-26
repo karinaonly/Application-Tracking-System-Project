@@ -40,20 +40,23 @@ function MiniGauge({ score, size = 44 }: { score: number; size?: number }) {
   )
 }
 
-const statCards = [
-  { icon: FileText,    label: "Resumes Uploaded",       val: "4",    sub: "2 analyzed this month",  iconBg: "rgba(59,130,246,0.1)",   iconColor: "#3B82F6" },
-  { icon: Briefcase,   label: "Job Descriptions Saved",  val: "7",    sub: "3 active targets",        iconBg: "rgba(139,92,246,0.1)",   iconColor: "#8B5CF6" },
-  { icon: BarChart2,   label: "Average ATS Score",        val: "68",   sub: "Up 12pts this month",    iconBg: "rgba(255,184,0,0.1)",    iconColor: "#FFB800", isScore: true },
-  { icon: CheckSquare, label: "Analyses Completed",       val: "9",    sub: "Last: 2 hours ago",       iconBg: "rgba(0,201,167,0.1)",    iconColor: "#00C9A7" },
+const statCardMeta = [
+  { icon: FileText,    label: "Resumes Uploaded",      iconBg: "rgba(59,130,246,0.1)", iconColor: "#3B82F6" },
+  { icon: Briefcase,   label: "Job Descriptions Saved", iconBg: "rgba(139,92,246,0.1)", iconColor: "#8B5CF6" },
+  { icon: BarChart2,   label: "Average ATS Score",      iconBg: "rgba(255,184,0,0.1)",  iconColor: "#FFB800", isScore: true },
+  { icon: CheckSquare, label: "Analyses Completed",     iconBg: "rgba(0,201,167,0.1)",  iconColor: "#00C9A7" },
 ]
 
-type RecentFile = { name: string; type: string; date: string; atsScore: number; kwScore: number | null; job: string }
-const demoRecentFiles: RecentFile[] = [
-  { name: "Alex_Kim_Resume_v4.pdf",  type: "PDF",  date: "Sep 24, 2026", atsScore: 72, kwScore: 58, job: "Senior SWE @ Stripe" },
-  { name: "Alex_Kim_Resume_v3.docx", type: "DOCX", date: "Sep 18, 2026", atsScore: 61, kwScore: 43, job: "Staff Engineer @ Vercel" },
-  { name: "Alex_Kim_Resume_v2.pdf",  type: "PDF",  date: "Sep 10, 2026", atsScore: 55, kwScore: 37, job: "Platform Engineer @ Linear" },
-  { name: "Alex_Kim_Resume_v1.pdf",  type: "PDF",  date: "Aug 30, 2026", atsScore: 44, kwScore: 29, job: "SWE @ Figma" },
-]
+type RecentFile = {
+  id: string
+  name: string
+  type: string
+  date: string
+  atsScore: number | null
+  kwScore: number | null
+  job: string
+  analysis: api.ResumeSummary["latest_analysis"]
+}
 
 const tips = [
   "Avoid tables in your resume — most ATS parsers can't read them correctly.",
@@ -77,20 +80,65 @@ function FileTypeBadge({ type }: { type: string }) {
 
 export default function Dashboard({ navigate, addToast }: PageProps) {
   const [tipIdx, setTipIdx] = useState(0)
-  const [recentFiles, setRecentFiles] = useState(demoRecentFiles)
+  const [recentFiles, setRecentFiles] = useState<RecentFile[]>([])
+  const [firstName, setFirstName] = useState("")
+  const [jobCount, setJobCount] = useState<number | null>(null)
 
   useEffect(() => {
+    api.getMe().then(user => setFirstName(user.full_name.split(/\s+/)[0] ?? "")).catch(() => {})
+    api.listJobs().then(jobs => setJobCount(jobs.length)).catch(() => setJobCount(null))
     api.listResumes().then(resumes => setRecentFiles(resumes.map(resume => ({
+      id: resume.id,
       name: resume.filename,
       type: resume.file_type.replace(".", "").toUpperCase(),
       date: new Date(resume.created_at).toLocaleDateString(),
-      atsScore: resume.latest_analysis?.ats_score ?? 0,
-      kwScore: (resume.latest_analysis?.report?.keyword_analysis?.score_available === false
-        ? null
-        : (resume.latest_analysis?.keyword_score ?? 0)) as number | null,
+      atsScore: resume.latest_analysis?.ats_score ?? null,
+      kwScore: resume.latest_analysis
+        ? (resume.latest_analysis.report?.keyword_analysis?.score_available === false
+          ? null
+          : (resume.latest_analysis.keyword_score ?? null))
+        : null,
       job: resume.latest_analysis?.job_id ? "Saved job description" : "General analysis",
+      analysis: resume.latest_analysis,
     })))).catch(error => addToast("error", error.message))
   }, [addToast])
+
+  // F13: real stats computed from the API; N/A when there is nothing to average.
+  const analyzed = recentFiles.filter(f => f.analysis)
+  const analysesCount = analyzed.length
+  const atsValues = analyzed.map(f => f.atsScore).filter((v): v is number => v != null)
+  const avgAts = atsValues.length
+    ? Math.round(atsValues.reduce((sum, v) => sum + v, 0) / atsValues.length)
+    : null
+  const statValues: { val: string; sub: string }[] = [
+    { val: String(recentFiles.length), sub: recentFiles.length ? "recent uploads" : "nothing uploaded yet" },
+    { val: jobCount == null ? "…" : String(jobCount), sub: jobCount ? "saved for targeting" : "none saved yet" },
+    { val: avgAts == null ? "N/A" : String(avgAts), sub: avgAts == null ? "analyze a resume first" : "across latest analyses" },
+    { val: String(analysesCount), sub: analysesCount ? "latest per resume" : "no analyses yet" },
+  ]
+
+  const openReport = (f: RecentFile) => {
+    if (!f.analysis) { addToast("error", "This resume has no analysis yet — run one from the Upload page."); return }
+    api.saveLastAnalysis({ ...f.analysis, resume_id: f.id, report: f.analysis.report ?? {} })
+    api.saveLastResumeId(f.id)
+    api.saveLastResumeMeta(f.name, f.job === "General analysis" ? undefined : "Saved job description")
+    navigate("analysis")
+  }
+
+  const exportResume = async (f: RecentFile) => {
+    addToast("info", `Generating DOCX for ${f.name}…`)
+    try {
+      const blob = await api.exportResume(f.id)
+      const link = document.createElement("a")
+      link.href = URL.createObjectURL(blob)
+      link.download = `${f.name.replace(/\.[^.]+$/, "")}_ATS_Optimized.docx`
+      link.click()
+      URL.revokeObjectURL(link.href)
+      addToast("success", "ATS-optimized resume downloaded!")
+    } catch (error) {
+      addToast("error", error instanceof Error ? error.message : "Could not export resume")
+    }
+  }
 
   return (
     <div className="min-h-screen bg-warm">
@@ -100,7 +148,7 @@ export default function Dashboard({ navigate, addToast }: PageProps) {
         <div className="flex items-start justify-between mb-8">
           <div>
             <p className="text-mid text-sm mb-0.5">Good morning 👋</p>
-            <h1 className="font-display font-bold text-2xl text-navy">Welcome back, Alex</h1>
+            <h1 className="font-display font-bold text-2xl text-navy">{firstName ? `Welcome back, ${firstName}` : "Welcome back"}</h1>
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -123,17 +171,17 @@ export default function Dashboard({ navigate, addToast }: PageProps) {
 
         {/* Stat cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          {statCards.map((s, i) => (
+          {statCardMeta.map((s, i) => (
             <div key={i} className="bg-surface rounded-2xl p-5 border border-edge hover:shadow-md transition-all duration-200">
               <div className="flex items-start justify-between mb-4">
                 <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: s.iconBg }}>
                   <s.icon size={18} style={{ color: s.iconColor }} />
                 </div>
-                {s.isScore && <MiniGauge score={parseInt(s.val)} />}
+                {s.isScore && avgAts != null && <MiniGauge score={avgAts} />}
               </div>
-              <p className="font-code font-medium text-3xl text-navy mb-1">{s.val}</p>
+              <p className="font-code font-medium text-3xl text-navy mb-1">{statValues[i].val}</p>
               <p className="text-xs font-medium text-navy mb-0.5">{s.label}</p>
-              <p className="text-xs text-dim">{s.sub}</p>
+              <p className="text-xs text-dim">{statValues[i].sub}</p>
             </div>
           ))}
         </div>
@@ -162,8 +210,16 @@ export default function Dashboard({ navigate, addToast }: PageProps) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-edge">
-                  {recentFiles.map((f, i) => (
-                    <tr key={i} className="hover:bg-warm/60 transition-colors group">
+                  {recentFiles.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="px-6 py-10 text-center">
+                        <p className="text-sm text-mid mb-1">No resumes yet.</p>
+                        <p className="text-xs text-dim">Upload your first resume to see analyses here.</p>
+                      </td>
+                    </tr>
+                  )}
+                  {recentFiles.map(f => (
+                    <tr key={f.id} className="hover:bg-warm/60 transition-colors group">
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
                           <FileTypeBadge type={f.type} />
@@ -185,23 +241,23 @@ export default function Dashboard({ navigate, addToast }: PageProps) {
                       <td className="px-3 py-4">
                         <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button
-                            onClick={() => navigate("analysis")}
+                            onClick={() => openReport(f)}
                             className="p-1.5 rounded-lg hover:bg-teal/10 text-mid hover:text-teal transition-colors"
-                            title="View Report"
+                            title={f.analysis ? "View Report" : "No analysis yet"}
                           >
                             <ExternalLink size={13} />
                           </button>
                           <button
-                            onClick={() => addToast("info", "Re-analysis queued for " + f.name)}
+                            onClick={() => { api.saveLastResumeId(f.id); navigate("upload") }}
                             className="p-1.5 rounded-lg hover:bg-navy/10 text-mid hover:text-navy transition-colors"
-                            title="Re-Analyze"
+                            title="Re-run analysis from the Upload page"
                           >
                             <RefreshCw size={13} />
                           </button>
                           <button
-                            onClick={() => addToast("success", "Downloading " + f.name)}
-                            className="p-1.5 rounded-lg hover:bg-green-50 text-mid hover:text-teal transition-colors"
-                            title="Export"
+                            onClick={() => exportResume(f)}
+                            className="p-1.5 rounded-lg hover:bg-teal/10 text-mid hover:text-teal transition-colors"
+                            title="Export tailored DOCX"
                           >
                             <Download size={13} />
                           </button>
@@ -240,23 +296,24 @@ export default function Dashboard({ navigate, addToast }: PageProps) {
                 <p className="font-semibold text-navy text-sm">Score Progress</p>
               </div>
               <div className="space-y-3">
-                {recentFiles.slice().reverse().map((f, i) => (
-                  <div key={i}>
+                {analyzed.slice().reverse().map(f => (
+                  <div key={f.id}>
                     <div className="flex items-center justify-between mb-1">
-                      <p className="text-xs text-mid truncate max-w-[140px]">{f.name.replace("Alex_Kim_", "")}</p>
-                      <span className="text-xs font-code font-medium" style={{ color: f.atsScore >= 75 ? "#00C9A7" : f.atsScore >= 50 ? "#FFB800" : "#FF4757" }}>{f.atsScore}</span>
+                      <p className="text-xs text-mid truncate max-w-[140px]">{f.name}</p>
+                      <span className="text-xs font-code font-medium" style={{ color: (f.atsScore ?? 0) >= 75 ? "#00C9A7" : (f.atsScore ?? 0) >= 50 ? "#FFB800" : "#FF4757" }}>{f.atsScore ?? "N/A"}</span>
                     </div>
                     <div className="h-1.5 bg-off rounded-full overflow-hidden">
                       <div
                         className="h-full rounded-full transition-all duration-700"
                         style={{
-                          width: `${f.atsScore}%`,
-                          background: f.atsScore >= 75 ? "#00C9A7" : f.atsScore >= 50 ? "#FFB800" : "#FF4757"
+                          width: `${f.atsScore ?? 0}%`,
+                          background: (f.atsScore ?? 0) >= 75 ? "#00C9A7" : (f.atsScore ?? 0) >= 50 ? "#FFB800" : "#FF4757"
                         }}
                       />
                     </div>
                   </div>
                 ))}
+                {analyzed.length === 0 && <p className="text-xs text-dim">Run an analysis to track score progress.</p>}
               </div>
             </div>
 

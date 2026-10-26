@@ -7,7 +7,9 @@ from fastapi import HTTPException, status
 
 from app.config.settings import get_settings
 from app.auth.models import User
-from app.auth.schemas import UserRegister
+from app.auth.schemas import UserRegister, ProfileUpdate, PasswordChange
+
+MIN_PASSWORD_LENGTH = 8
 
 settings = get_settings()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -46,3 +48,25 @@ class AuthService:
         if not user or not self.verify_password(password, user.hashed_password):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
         return user
+
+    def update_profile(self, user: User, data: ProfileUpdate) -> User:
+        # A21: real profile save -- only full_name is editable; email is fixed.
+        user.full_name = data.full_name.strip()
+        self.session.add(user)
+        self.session.commit()
+        self.session.refresh(user)
+        return user
+
+    def change_password(self, user: User, data: PasswordChange) -> None:
+        # A21: verify the current password before accepting a new one.
+        if not self.verify_password(data.current_password, user.hashed_password):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
+        new = data.new_password
+        if len(new) < MIN_PASSWORD_LENGTH:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"New password must be at least {MIN_PASSWORD_LENGTH} characters",
+            )
+        user.hashed_password = self.hash_password(new)
+        self.session.add(user)
+        self.session.commit()

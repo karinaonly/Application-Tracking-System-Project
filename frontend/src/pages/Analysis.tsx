@@ -233,6 +233,23 @@ export default function Analysis({ navigate, addToast }: PageProps) {
   }
 
   const report = analysis?.report
+  // F5: without an analysis there is nothing to show -- never render a zeroed-out report.
+  if (!analysis) {
+    return (
+      <div className="min-h-screen bg-warm">
+        <div className="max-w-5xl mx-auto px-6 py-20 text-center">
+          <h1 className="font-display font-bold text-2xl text-navy mb-2">No analysis to show</h1>
+          <p className="text-sm text-mid mb-6">Run an analysis from the Upload page and the full report will appear here.</p>
+          <button
+            onClick={() => navigate("upload")}
+            className="px-5 py-2.5 bg-navy text-white text-sm font-semibold rounded-xl hover:bg-navy-light transition-all"
+          >
+            Go to Upload
+          </button>
+        </div>
+      </div>
+    )
+  }
   const atsIssues: AnalysisIssue[] = (report?.ats?.issues ?? []).map(issue => ({
     title: issue.issue,
     severity: issue.category,
@@ -271,7 +288,7 @@ export default function Analysis({ navigate, addToast }: PageProps) {
     !kwAvailable && `Keyword Match (${report?.keyword_analysis?.reason ?? "unavailable"})`,
     !bulletAvailable && `Bullet Impact (${report?.bullet_analysis?.warning ?? "unavailable"})`,
   ].filter(Boolean) as string[]
-  const overall = analysis?.overall_score ?? 0
+  const overall = analysis.overall_score
   const verdict = overall >= 75 ? "ATS-Ready!" : overall >= 50 ? "Almost there!" : "Needs significant work"
   const verdictColor = overall >= 75 ? "#00C9A7" : overall >= 50 ? "#D97706" : "#FF4757"
 
@@ -361,7 +378,7 @@ export default function Analysis({ navigate, addToast }: PageProps) {
               </div>
               <p className="font-display font-semibold text-sm text-navy">ATS Compatibility</p>
             </div>
-            <p className="font-code text-3xl font-medium text-amber mb-4">{analysis?.ats_score ?? 0}<span className="text-lg text-mid">/100</span></p>
+            <p className="font-code text-3xl font-medium text-amber mb-4">{analysis.ats_score ?? "N/A"}{analysis.ats_score != null && <span className="text-lg text-mid">/100</span>}</p>
             <div className="space-y-1.5">
               {atsIssues.map((issue, i) => (
                 <div key={i} className="flex items-start gap-1.5">
@@ -383,7 +400,7 @@ export default function Analysis({ navigate, addToast }: PageProps) {
               </div>
               <p className="font-display font-semibold text-sm text-navy">Keyword Match</p>
             </div>
-            <p className="font-code text-3xl font-medium text-red mb-1">{kwAvailable ? (analysis?.keyword_score ?? 0) : "N/A"}{kwAvailable && <span className="text-lg text-mid">%</span>}</p>
+            <p className="font-code text-3xl font-medium text-red mb-1">{kwAvailable ? (analysis.keyword_score ?? "N/A") : "N/A"}{kwAvailable && analysis.keyword_score != null && <span className="text-lg text-mid">%</span>}</p>
             <p className="text-xs text-dim mb-3">{kwAvailable ? `Cosine similarity: ${report?.keyword_analysis?.similarity ?? 0}%` : (report?.keyword_analysis?.reason ?? "Select a job description to score keywords.")}</p>
             <div className="space-y-1.5">
               <div className="flex items-center gap-2">
@@ -411,7 +428,7 @@ export default function Analysis({ navigate, addToast }: PageProps) {
               </div>
               <p className="font-display font-semibold text-sm text-navy">Bullet Impact</p>
             </div>
-            <p className="font-code text-3xl font-medium text-teal mb-4">{bulletAvailable ? (analysis?.bullet_score ?? 0) : "N/A"}{bulletAvailable && <span className="text-lg text-mid">/100</span>}</p>
+            <p className="font-code text-3xl font-medium text-teal mb-4">{bulletAvailable ? (analysis.bullet_score ?? "N/A") : "N/A"}{bulletAvailable && analysis.bullet_score != null && <span className="text-lg text-mid">/100</span>}</p>
             {!bulletAvailable && <p className="text-xs text-dim mb-3">{report?.bullet_analysis?.warning}</p>}
             <div className="grid grid-cols-2 gap-2">
                 {[
