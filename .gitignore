@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+
+# Databases and uploaded resumes
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Node / frontend build output
+node_modules/
+dist/
+.vite/
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db

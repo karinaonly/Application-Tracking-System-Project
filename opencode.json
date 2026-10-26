@@ -1,0 +1,8 @@
+{
+  "mcp": {
+    "superpowers": {
+      "command": "npx",
+      "args": ["-y", "@obra/superpowers"]
+    }
+  }
+}

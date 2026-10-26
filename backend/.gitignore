@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+*.pyc
+.env
+ats_resume_fixer.db
+uploads/*
+!uploads/.gitkeep
