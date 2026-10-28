@@ -62,7 +62,13 @@ async def scrape_job_url(url: str) -> dict:
                 current_url = str(next_url)
                 continue
             if resp.status_code != 200:
-                return {"title": "Scraped Job", "company": "", "text": ""}
+                # Many job boards (Indeed, LinkedIn) block automated fetches.
+                # Fail loudly instead of returning an empty result that would
+                # be saved as a junk row.
+                raise ValueError(
+                    f"Could not fetch the page (HTTP {resp.status_code}). "
+                    "The site may block automated access -- please paste the job description manually instead."
+                )
 
             soup = BeautifulSoup(resp.text, "html.parser")
             for tag in soup(["script", "style", "nav", "footer", "header"]):
@@ -72,10 +78,17 @@ async def scrape_job_url(url: str) -> dict:
             title_text = title.get_text().strip() if title else "Job Posting"
             body_text = soup.get_text(separator="\n").strip()
             lines = [line.strip() for line in body_text.splitlines() if line.strip()]
+            text = "\n".join(lines[:200])
+            if len(text) < 100:
+                # 200 but no real content: bot-wall / cookie-wall page.
+                raise ValueError(
+                    "Could not extract job content from this page. "
+                    "The site may require JavaScript or block automated access -- please paste the job description manually instead."
+                )
             return {
                 "title": title_text,
                 "company": "Extracted from web",
-                "text": "\n".join(lines[:200])
+                "text": text
             }
 
     raise ValueError(f"URL blocked by SSRF guard: too many redirects (>{MAX_REDIRECTS})")
