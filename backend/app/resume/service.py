@@ -322,9 +322,15 @@ class ResumeService:
             raise HTTPException(status_code=400, detail="No keywords to confirm")
 
         report = analysis.report or {}
-        report["confirmed_keywords"] = confirmed
-        # Reassign so SQLModel detects the mutation of the JSON column.
-        analysis.report = report
+        # Build a NEW dict: reassigning the same object after an in-place
+        # mutation is invisible to SQLAlchemy's change detection, so the JSON
+        # column was silently NOT updated — the API returned 200 and the UI
+        # showed confirmed chips, but exports (and fresh sessions) never saw
+        # them. Caught live: two analyses had confirmed chips and `None` in DB.
+        analysis.report = {
+            **report,
+            "confirmed_keywords": confirmed,
+        }
         self.session.add(analysis)
         self.session.commit()
         self.session.refresh(analysis)

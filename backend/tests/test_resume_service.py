@@ -3,7 +3,9 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 from fastapi import HTTPException
+from sqlmodel import SQLModel, Session, create_engine
 
+from app.auth.models import User  # registers the users table for real-DB tests
 from app.common.exceptions import AnalysisNotFoundError, JobNotFoundError, ResumeNotFoundError, VersionNotFoundError
 from app.jobs.models import JobDescription
 from app.resume.models import Resume, ResumeAnalysis, ResumeVersion
@@ -548,6 +550,55 @@ class VersionTests(unittest.TestCase):
 
         with self.assertRaises(VersionNotFoundError):
             self.service.export_version_docx(resume.id, version.id, owner_id)
+
+
+class ConfirmKeywordsPersistenceTests(unittest.TestCase):
+    """A3 regression: the JSON column update must survive a new session.
+
+    Mocks could not catch this — the service mutated the report dict in place
+    and reassigned the same object, so SQLAlchemy emitted no UPDATE. The API
+    returned 200 and the UI showed confirmed chips, but exports read `None`.
+    This test uses a real SQLite DB and a fresh session for the export.
+    """
+
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+        )
+        SQLModel.metadata.create_all(self.engine)
+        self.session = Session(self.engine)
+        self.service = ResumeService(self.session)
+        self.owner_id = uuid4()
+        self.resume = make_resume(self.owner_id)
+        self.analysis = make_analysis(self.resume.id, report={
+            "keyword_analysis": {"missing_keywords": ["SQL", "Linux"]},
+        })
+        self.session.add(self.resume)
+        self.session.add(self.analysis)
+        self.session.commit()
+
+    def tearDown(self):
+        self.session.close()
+
+    def test_confirmation_is_visible_to_a_fresh_session_and_export(self):
+        self.service.confirm_keywords(
+            self.resume.id, self.analysis.id, self.owner_id, ["SQL", "Linux"]
+        )
+
+        with Session(self.engine) as fresh:
+            stored = fresh.get(ResumeAnalysis, self.analysis.id)
+            self.assertEqual(
+                stored.report["confirmed_keywords"], ["SQL", "Linux"]
+            )
+            # the export request opens its own session — it must see them
+            svc = ResumeService(fresh)
+            exporter = MagicMock()
+            exporter.export_tailored.return_value = b"docx"
+            svc.exporter = exporter
+            svc.export_docx(self.resume.id, self.owner_id, self.analysis.id)
+            kwargs = exporter.export_tailored.call_args.kwargs
+            self.assertEqual(kwargs["missing_keywords"], ["SQL", "Linux"])
 
 
 if __name__ == "__main__":

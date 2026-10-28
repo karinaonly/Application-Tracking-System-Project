@@ -214,6 +214,14 @@ class KeywordFilterTests(unittest.TestCase):
         self.assertNotIn("Sql", out)
         self.assertNotIn("Postgresql", out)
 
+    def test_filter_does_not_treat_mysql_as_sql(self):
+        # Live regression: "SQL" was dropped because "MySQL" contains "sql"
+        # as a substring. Whole-word matching keeps the confirmed skill.
+        out = DocxExporter()._filter_keywords(
+            "Databases: MySQL, PostgreSQL", ["SQL", "Java"]
+        )
+        self.assertEqual(out, ["SQL", "Java"])
+
     def test_export_appends_additional_skills_line(self):
         sections = make_sections()
         text = document_text(

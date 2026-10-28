@@ -589,13 +589,21 @@ class DocxExporter:
     ) -> list[str]:
         if not missing_keywords:
             return []
+        skills_lower = skills_text.lower()
         out, seen = [], set()
         for kw in missing_keywords:
             cleaned = kw.strip().strip("-").strip("*").strip()
             k_lower = cleaned.lower()
             if not k_lower or k_lower in seen:
                 continue
-            if k_lower in skills_text.lower():
+            # Whole-word match, not substring: "SQL" must not be considered
+            # already listed just because the skills text says "MySQL" (this
+            # silently dropped confirmed SQL/Java whenever MySQL/JavaScript
+            # were present). Caught live on a real export.
+            present = re.compile(
+                r"(?<![A-Za-z0-9])" + re.escape(k_lower) + r"(?![A-Za-z0-9])"
+            )
+            if present.search(skills_lower):
                 continue
             if any(f in k_lower.split() for f in self.FLUFF):
                 continue
