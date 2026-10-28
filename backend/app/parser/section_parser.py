@@ -1,5 +1,6 @@
 import re
 from app.common.constants import SECTION_PATTERNS
+from app.common.headline import extract_headline
 
 
 class SectionParser:
@@ -307,6 +308,10 @@ class SectionParser:
     def _parse_contact(self, text: str) -> dict:
         contact = {
             "name": "",
+            # A4: the professional title ("FULL STACK DEVELOPER") printed under
+            # the name. Kept so the exporter can show the candidate's own title
+            # instead of substituting the job posting's.
+            "title": "",
             "email": "",
             "phone": "",
             "linkedin": "",
@@ -398,6 +403,7 @@ class SectionParser:
             if is_name_candidate:
                 contact["name"] = line
 
+        contact["title"] = extract_headline(text, contact["name"])
         return contact
 
     # ─────────────────────────────────────────────

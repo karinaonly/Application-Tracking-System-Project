@@ -69,6 +69,60 @@ class ContactParsingTests(unittest.TestCase):
         self.assertEqual(contact["location"], "Quezon City, Metro Manila 1108")
 
 
+class ContactHeadlineTests(unittest.TestCase):
+    """A4: the resume's own professional title is captured, not discarded."""
+
+    def setUp(self):
+        self.parser = SectionParser()
+
+    def test_headline_is_captured(self):
+        contact = self.parser._parse_contact(
+            "JANE DOE\n"
+            "FULL STACK DEVELOPER\n"
+            "jane@example.com | +63 917 123 4567 | Manila, PH"
+        )
+        self.assertEqual(contact["name"], "JANE DOE")
+        self.assertEqual(contact["title"], "FULL STACK DEVELOPER")
+
+    def test_mixed_case_headline_is_captured(self):
+        contact = self.parser._parse_contact("Jane Doe\nBackend Engineer\njane@example.com")
+        self.assertEqual(contact["title"], "Backend Engineer")
+
+    def test_headline_is_never_the_name(self):
+        # A role-shaped line is never taken as the candidate's name, whether it
+        # appears above or below the real name.
+        contact = self.parser._parse_contact(
+            "FULL STACK DEVELOPER\nJane Doe\njane@example.com"
+        )
+        self.assertEqual(contact["name"], "Jane Doe")
+        self.assertEqual(contact["title"], "FULL STACK DEVELOPER")
+
+    def test_location_and_degree_are_not_headlines(self):
+        contact = self.parser._parse_contact(
+            "Jane Doe\nQuezon City, Metro Manila 1108\nBS Computer Science\njane@example.com"
+        )
+        self.assertEqual(contact["title"], "")
+
+    def test_block_without_a_headline_stays_empty(self):
+        contact = self.parser._parse_contact(
+            "Jane Doe\njane@example.com | +63 917 123 4567"
+        )
+        self.assertEqual(contact["title"], "")
+
+    def test_full_parse_exposes_headline_and_keeps_summary(self):
+        sections = self.parser.parse(
+            "JANE DOE\n"
+            "FULL STACK DEVELOPER\n"
+            "jane@example.com\n"
+            "\n"
+            "SUMMARY\n"
+            "Aspiring Full Stack Developer skilled in React.js.\n"
+        )
+        self.assertEqual(sections["contact_parsed"]["title"], "FULL STACK DEVELOPER")
+        self.assertEqual(sections["contact_parsed"]["name"], "JANE DOE")
+        self.assertIn("Aspiring Full Stack Developer", sections["summary"]["raw"])
+
+
 class InlineHeaderTests(unittest.TestCase):
     """A15: inline section headers like 'Skills: Python, React'."""
 

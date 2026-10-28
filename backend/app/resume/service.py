@@ -233,6 +233,7 @@ class ResumeService:
         resume_id: UUID,
         user_id: UUID,
         analysis_id: UUID | None = None,
+        match_title: bool = False,
     ) -> bytes:
         resume = self.session.get(Resume, resume_id)
         if not resume or resume.user_id != user_id:
@@ -259,7 +260,9 @@ class ResumeService:
             confirmed_keywords = analysis.report.get("confirmed_keywords", [])
             rewritten_bullets = analysis.report.get("ai_rewritten_examples", {})
 
-            # Fetch target job title if attached
+            # Fetch the job title. A4: it is only used when the caller asks for
+            # it (match_title) — by default the export keeps the resume's own
+            # title rather than silently adopting the posting's.
             if analysis.job_id:
                 job = self.session.get(JobDescription, analysis.job_id)
                 if job:
@@ -269,7 +272,8 @@ class ResumeService:
             sections=resume.parsed_data.get("sections", {}),
             missing_keywords=confirmed_keywords,
             rewritten_bullets=rewritten_bullets,
-            target_role=target_role
+            target_role=target_role,
+            match_title=match_title,
         )
 
     # ------------------------------------------------------------------ #
@@ -469,7 +473,13 @@ class ResumeService:
         self.session.delete(version)
         self.session.commit()
 
-    def export_version_docx(self, resume_id: UUID, version_id: UUID, user_id: UUID) -> tuple[bytes, str]:
+    def export_version_docx(
+        self,
+        resume_id: UUID,
+        version_id: UUID,
+        user_id: UUID,
+        match_title: bool = False,
+    ) -> tuple[bytes, str]:
         """Export the stored tailored version. Bullets are already rewritten in
         the stored sections, so no rewrite map is passed to the exporter."""
         resume = self.session.get(Resume, resume_id)
@@ -495,7 +505,15 @@ class ResumeService:
             missing_keywords=confirmed_keywords,
             rewritten_bullets={},
             target_role=target_role,
+            match_title=match_title,
         )
-        safe = re.sub(r"[^A-Za-z0-9]+", "_", target_role).strip("_") if target_role else ""
+        # A4: name the file after the job only when the export actually used
+        # the job's title; otherwise the filename would imply a match that
+        # isn't in the document.
+        safe = (
+            re.sub(r"[^A-Za-z0-9]+", "_", target_role).strip("_")
+            if match_title and target_role
+            else ""
+        )
         filename = f"Resume_Tailored_{safe}.docx" if safe else "ATS_Optimized_Resume.docx"
         return data, filename

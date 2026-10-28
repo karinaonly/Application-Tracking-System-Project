@@ -16,6 +16,7 @@ from app.common.skills import (
     label_matches_category,
     skill_category,
 )
+from app.common.headline import extract_headline
 
 
 _CAMEL_BOUNDARY_RE = re.compile(r"[a-z][A-Z]")
@@ -32,6 +33,16 @@ _BAD_DASH_RE = re.compile(
 def _normalize_glyphs(text: str) -> str:
     """Replace unrenderable dash glyphs with ASCII hyphens."""
     return _BAD_DASH_RE.sub("-", text)
+
+
+def _normalize_layout_label(text: str) -> str:
+    """Normalize a line so it can be compared against ``LAYOUT_LABELS``.
+
+    Case, padding, a trailing colon, and hyphen-vs-space variants all collapse
+    ("Part-Time:" -> "part time"), so the label set stays readable.
+    """
+    cleaned = (text or "").strip().rstrip(":").replace("-", " ")
+    return " ".join(cleaned.lower().split())
 
 # Brand/contact names that are not in the skills taxonomy but must keep their
 # internal capital (A14 renders them; A13 must not split them).
@@ -74,13 +85,24 @@ class DocxExporter:
     DATE_RE = re.compile(r"^\d{4}(\s*[-–—]\s*\d{4})?\b")
     BULLET_RE = re.compile(r"^[•\-\*]\s*")
     PLACEHOLDER_RE = re.compile(r"\[[^\]]{1,30}\]")
-    # Left-column labels that sometimes leak from the master resume
-    LABEL_RE = re.compile(
-        r"^(College|Senior\s*High(?:\s*School)?|University|Institute|"
-        r"Internship|Capstone|Academic|Freelance|Part[- ]?Time|"
-        r"Full[- ]?Time|Contract|Volunteer|Personal)$",
-        re.I,
-    )
+    # A4: left-column labels that sometimes leak from a master-resume layout
+    # (a two-column template renders "College", "Capstone", ... as their own
+    # lines). This is a configurable set rather than a hardcoded regex, so a
+    # different template can extend or override LAYOUT_LABELS (see
+    # _is_layout_label) instead of patching a pattern.
+    LAYOUT_LABELS: frozenset[str] = frozenset({
+        "college", "senior high", "senior high school", "university",
+        "institute", "internship", "capstone", "academic", "freelance",
+        "part time", "parttime", "full time", "fulltime", "contract",
+        "volunteer", "personal", "side project",
+    })
+    # Labels that may prefix real content on the same line ("College Bachelor
+    # of Science" -> "Bachelor of Science"). Deliberately narrower than
+    # LAYOUT_LABELS: an employment type like "Contract" is part of a title.
+    LAYOUT_PREFIX_LABELS: frozenset[str] = frozenset({
+        "college", "senior high", "senior high school", "academic",
+        "capstone", "internship",
+    })
 
     FONT_FAMILY = "Arial"
     COLOR_PRIMARY_HEX = "003366"
@@ -108,6 +130,7 @@ class DocxExporter:
         missing_keywords: list[str] | None = None,
         rewritten_bullets: dict | None = None,
         target_role: str = "",
+        match_title: bool = False,
     ) -> bytes:
         doc = docx.Document()
         self._setup_page(doc)
@@ -115,13 +138,21 @@ class DocxExporter:
         self._setup_bullet_style(doc)
 
         c = sections.get("contact_parsed", {}) or {}
-        self._add_header(doc, c, target_role)
+        # A4: the resume's own title always wins. The job posting's title is
+        # only substituted when the user explicitly opts in per export —
+        # otherwise the export would silently claim a role the resume doesn't.
+        resume_title = (c.get("title") or "").strip() or extract_headline(
+            sections.get("contact", {}).get("raw", ""), c.get("name", "")
+        )
+        self._add_header(doc, c, target_role, resume_title, match_title)
 
         if sections.get("summary", {}).get("raw"):
             self._heading(doc, "SUMMARY")
-            self._add_flow_text(
-                doc, sections["summary"]["raw"].replace("Aspiring ", "")
-            )
+            # A4: no silent edits to the candidate's own words — "Aspiring
+            # Full Stack Developer" used to be rewritten to "Full Stack
+            # Developer" without asking. If the user wants it gone, they can
+            # change their resume.
+            self._add_flow_text(doc, sections["summary"]["raw"])
 
         # ✅ Prefer structured education_parsed
         edu_parsed = sections.get("education_parsed")
@@ -243,7 +274,14 @@ class DocxExporter:
     # header / contact
     # ---------------------------------------------------------------- #
 
-    def _add_header(self, doc, c: dict, target_role: str):
+    def _add_header(
+        self,
+        doc,
+        c: dict,
+        target_role: str = "",
+        resume_title: str = "",
+        match_title: bool = False,
+    ):
         if c.get("name"):
             p = doc.add_paragraph()
             p.paragraph_format.space_after = Pt(1)
@@ -251,16 +289,23 @@ class DocxExporter:
             r = p.add_run(c["name"].upper())
             self._force_font(r, size_pt=14, bold=True, color=RGBColor(10, 10, 10))
 
-        clean_role = (
-            target_role.strip().upper()
-            if target_role and target_role.strip().lower() not in ("string", "")
-            else "FULL STACK DEVELOPER"
-        )
-        p_sub = doc.add_paragraph()
-        p_sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p_sub.paragraph_format.space_after = Pt(3)
-        r_sub = p_sub.add_run(clean_role)
-        self._force_font(r_sub, size_pt=10, bold=True, color=self.COLOR_PRIMARY_RGB)
+        # A4: never invent a title. Default to the resume's own headline; the
+        # job posting's title is used only when the user ticks "match this job"
+        # for this export. No title at all beats a fabricated one, so the
+        # subtitle line is simply omitted when neither is available.
+        job_title = (target_role or "").strip()
+        if job_title.lower() == "string":  # legacy placeholder value in stored data
+            job_title = ""
+        chosen = job_title if (match_title and job_title) else (resume_title or "").strip()
+        clean_role = chosen.upper()
+        if clean_role:
+            p_sub = doc.add_paragraph()
+            p_sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p_sub.paragraph_format.space_after = Pt(3)
+            r_sub = p_sub.add_run(clean_role)
+            self._force_font(
+                r_sub, size_pt=10, bold=True, color=self.COLOR_PRIMARY_RGB
+            )
 
         p_cnt = doc.add_paragraph()
         p_cnt.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -409,7 +454,7 @@ class DocxExporter:
 
         for d in details:
             d = (d or "").strip()
-            if not d or self.LABEL_RE.match(d):
+            if not d or self._is_layout_label(d):
                 continue
             pd = doc.add_paragraph()
             pd.paragraph_format.space_after = Pt(0)
@@ -432,7 +477,7 @@ class DocxExporter:
         bullets = entry.get("bullets") or []
 
         # Skip pure label leftovers
-        if title and self.LABEL_RE.match(title) and not subtitle:
+        if title and self._is_layout_label(title) and not subtitle:
             title, subtitle = subtitle, ""
         if not title and not subtitle and not bullets:
             return
@@ -456,7 +501,7 @@ class DocxExporter:
             r_date = p.add_run(dates)
             self._force_font(r_date, size_pt=9, color=self.COLOR_MUTED_RGB)
 
-        if subtitle and not self.LABEL_RE.match(subtitle):
+        if subtitle and not self._is_layout_label(subtitle):
             p2 = doc.add_paragraph()
             p2.paragraph_format.space_before = Pt(0)
             p2.paragraph_format.space_after = Pt(1)
@@ -696,6 +741,18 @@ class DocxExporter:
             text = text.replace(f"\x00{index}\x00", term)
         return text
 
+    def _is_layout_label(self, line: str) -> bool:
+        """True when a line is only a layout tag ("College", "Capstone")."""
+        return _normalize_layout_label(line) in self.LAYOUT_LABELS
+
+    def _peel_layout_label(self, line: str) -> str:
+        """Strip a leading layout tag from real content."""
+        for label in sorted(self.LAYOUT_PREFIX_LABELS, key=len, reverse=True):
+            match = re.match(rf"^{re.escape(label)}\s+", line, re.I)
+            if match:
+                return line[match.end():]
+        return line
+
     def _clean_lines(self, text: str) -> list[str]:
         if not text:
             return []
@@ -708,15 +765,11 @@ class DocxExporter:
             if not s:
                 continue
             # drop pure left-column labels
-            if self.LABEL_RE.match(s):
+            if self._is_layout_label(s):
                 continue
-            # peel leading label on same line: "College Bachelor..." -> "Bachelor..."
-            s = re.sub(
-                r"^(College|Senior\s*High|Academic|Capstone|Internship)\s+",
-                "",
-                s,
-                flags=re.I,
-            ).strip()
+            # peel a leading label on the same line:
+            # "College Bachelor of Science..." -> "Bachelor of Science..."
+            s = self._peel_layout_label(s).strip()
             if s:
                 out.append(s)
         return out

@@ -73,11 +73,14 @@ def analyze_resume(
 def export_resume(
     resume_id: UUID,
     analysis_id: UUID | None = None,
+    # A4: opt-in only — the export keeps the resume's own title unless the
+    # user explicitly asks to match the attached job's title.
+    match_title: bool = False,
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
     service = ResumeService(session)
-    data = service.export_docx(resume_id, user.id, analysis_id)
+    data = service.export_docx(resume_id, user.id, analysis_id, match_title=match_title)
     return Response(
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -147,11 +150,15 @@ def list_versions(
 def export_version(
     resume_id: UUID,
     version_id: UUID,
+    # A4: same opt-in rule as the direct export endpoint.
+    match_title: bool = False,
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
     service = ResumeService(session)
-    data, filename = service.export_version_docx(resume_id, version_id, user.id)
+    data, filename = service.export_version_docx(
+        resume_id, version_id, user.id, match_title=match_title
+    )
     return Response(
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",

@@ -212,6 +212,9 @@ function RewriteCard({ item }: { item: AnalysisRewrite }) {
 export default function Analysis({ navigate, addToast }: PageProps) {
   const [passedOpen, setPassedOpen] = useState(false)
   const [exportLoading, setExportLoading] = useState(false)
+  // A4: the export keeps the resume's own title by default; matching the
+  // job posting's title is an explicit, per-export choice.
+  const [matchTitle, setMatchTitle] = useState(false)
   const [saveVersionLoading, setSaveVersionLoading] = useState(false)
   // A3: which missing keywords the user ticked as "skills I actually have"
   const [selectedKws, setSelectedKws] = useState<string[]>([])
@@ -227,7 +230,7 @@ export default function Analysis({ navigate, addToast }: PageProps) {
     addToast("info", "Generating ATS-optimized DOCX…")
     try {
       // A18: pin the export to the analysis being viewed on this page.
-      const blob = await api.exportResume(resumeId, analysis?.id)
+      const blob = await api.exportResume(resumeId, analysis?.id, matchTitle)
       const link = document.createElement("a")
       link.href = URL.createObjectURL(blob)
       link.download = "ATS_Optimized_Resume.docx"
@@ -752,6 +755,23 @@ export default function Analysis({ navigate, addToast }: PageProps) {
           <div>
             <p className="font-display font-semibold text-navy text-sm">Ready to apply?</p>
             <p className="text-xs text-mid">Download your ATS-optimized resume with all formatting fixes applied.</p>
+            {resumeMeta?.jobTitle && (
+              <label className="mt-2 flex items-start gap-2 text-xs text-mid cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={matchTitle}
+                  onChange={e => setMatchTitle(e.target.checked)}
+                  className="mt-0.5"
+                  style={{ accentColor: "#1B2A4A" }}
+                />
+                <span>
+                  Match my title to this job (“{resumeMeta.jobTitle}”)
+                  <span className="block text-dim">
+                    Off by default — the export keeps your own title unless you tick this.
+                  </span>
+                </span>
+              </label>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <button

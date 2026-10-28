@@ -209,12 +209,21 @@ export async function analyzeResume(resumeId: string, jobId?: string): Promise<R
   return request<ResumeAnalysis>(`/resumes/${resumeId}/analyze${query}`, { method: "POST" })
 }
 
-export async function exportResume(resumeId: string, analysisId?: string): Promise<Blob> {
+export async function exportResume(
+  resumeId: string,
+  analysisId?: string,
+  // A4: opt-in only. By default the export keeps the resume's own title; set
+  // this to true only when the user explicitly asks to match the job's title.
+  matchTitle = false
+): Promise<Blob> {
   const headers = new Headers()
   const token = getToken()
   if (token) headers.set("Authorization", `Bearer ${token}`)
   // A18: export the analysis being viewed, not "the latest" server-side.
-  const query = analysisId ? `?analysis_id=${encodeURIComponent(analysisId)}` : ""
+  const params = new URLSearchParams()
+  if (analysisId) params.set("analysis_id", analysisId)
+  if (matchTitle) params.set("match_title", "true")
+  const query = params.toString() ? `?${params.toString()}` : ""
   const response = await fetch(`${API_BASE_URL}/resumes/${resumeId}/export${query}`, { headers })
   if (!response.ok) throw new Error("Could not export resume")
   return response.blob()
@@ -245,11 +254,17 @@ export async function listVersions(resumeId: string): Promise<ResumeVersionSumma
   return request<ResumeVersionSummary[]>(`/resumes/${resumeId}/versions`)
 }
 
-export async function exportVersion(resumeId: string, versionId: string): Promise<Blob> {
+export async function exportVersion(
+  resumeId: string,
+  versionId: string,
+  // A4: same opt-in rule as exportResume.
+  matchTitle = false
+): Promise<Blob> {
   const headers = new Headers()
   const token = getToken()
   if (token) headers.set("Authorization", `Bearer ${token}`)
-  const response = await fetch(`${API_BASE_URL}/resumes/${resumeId}/versions/${versionId}/export`, { headers })
+  const query = matchTitle ? "?match_title=true" : ""
+  const response = await fetch(`${API_BASE_URL}/resumes/${resumeId}/versions/${versionId}/export${query}`, { headers })
   if (!response.ok) throw new Error("Could not export version")
   return response.blob()
 }

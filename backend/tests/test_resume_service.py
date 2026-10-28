@@ -563,13 +563,36 @@ class VersionTests(unittest.TestCase):
         data, filename = self.service.export_version_docx(resume.id, version.id, owner_id)
 
         self.assertEqual(data, b"docx")
-        self.assertEqual(filename, "Resume_Tailored_Backend_Dev.docx")
+        # A4: the job title is passed through but NOT applied by default, so
+        # the filename must not claim the job either.
+        self.assertEqual(filename, "ATS_Optimized_Resume.docx")
         kwargs = self.exporter.export_tailored.call_args.kwargs
         # bullets are already tailored in the stored sections -- no rewrite map passed
         self.assertEqual(kwargs["rewritten_bullets"], {})
         self.assertEqual(kwargs["sections"], version.parsed_data["sections"])
         self.assertEqual(kwargs["target_role"], "Backend Dev")
+        self.assertFalse(kwargs["match_title"])
         self.assertEqual(kwargs["missing_keywords"], ["Docker"])
+
+    def test_export_version_can_match_the_job_title_on_request(self):
+        owner_id = uuid4()
+        resume = self._make_resume(owner_id)
+        job = JobDescription(id=uuid4(), user_id=owner_id, title="Backend Dev", raw_text="jd")
+        analysis = make_analysis(resume.id, report={})
+        version = ResumeVersion(
+            id=uuid4(), resume_id=resume.id, job_id=job.id, analysis_id=analysis.id,
+            label="Tailored for Backend Dev", raw_text="tailored",
+            parsed_data={"sections": {}}, applied_rewrites={},
+        )
+        self._wire_session(resume, analysis, job=job, existing_version=version)
+
+        _, filename = self.service.export_version_docx(
+            resume.id, version.id, owner_id, match_title=True
+        )
+
+        self.assertEqual(filename, "Resume_Tailored_Backend_Dev.docx")
+        kwargs = self.exporter.export_tailored.call_args.kwargs
+        self.assertTrue(kwargs["match_title"])
 
     def test_export_foreign_version_is_rejected(self):
         owner_id = uuid4()

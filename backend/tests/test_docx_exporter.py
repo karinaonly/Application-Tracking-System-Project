@@ -290,5 +290,84 @@ class KeywordFilterTests(unittest.TestCase):
         self.assertEqual(out, ["Docker"])
 
 
+class HeaderTitleTests(unittest.TestCase):
+    """A4: the export shows the resume's own title, never the job's by default."""
+
+    def _sections_with_title(self, title: str = "Full Stack Developer") -> dict:
+        sections = make_sections()
+        sections["contact_parsed"]["title"] = title
+        return sections
+
+    def test_own_title_is_kept_when_a_job_is_attached(self):
+        text = document_text(
+            DocxExporter().export_tailored(
+                self._sections_with_title(), target_role="Frontend Apprentice"
+            )
+        )
+        self.assertIn("FULL STACK DEVELOPER", text)
+        self.assertNotIn("FRONTEND APPRENTICE", text)
+
+    def test_job_title_is_used_only_when_explicitly_requested(self):
+        text = document_text(
+            DocxExporter().export_tailored(
+                self._sections_with_title(),
+                target_role="Frontend Apprentice",
+                match_title=True,
+            )
+        )
+        self.assertIn("FRONTEND APPRENTICE", text)
+        self.assertNotIn("FULL STACK DEVELOPER", text)
+
+    def test_match_title_without_a_job_keeps_the_own_title(self):
+        text = document_text(
+            DocxExporter().export_tailored(
+                self._sections_with_title(), target_role="", match_title=True
+            )
+        )
+        self.assertIn("FULL STACK DEVELOPER", text)
+
+    def test_no_title_is_never_fabricated(self):
+        # The old hardcoded "FULL STACK DEVELOPER" fallback printed a title
+        # the candidate never claimed, for every user without a job attached.
+        sections = make_sections()
+        text = document_text(DocxExporter().export_tailored(sections))
+        self.assertNotIn("FULL STACK DEVELOPER", text)
+        self.assertIn("JANE DOE", text)  # the rest of the header still renders
+
+    def test_legacy_resume_recovers_title_from_contact_raw(self):
+        # Resumes parsed before A4 have no contact_parsed["title"]; the title
+        # must still be recovered from the stored header text on export.
+        sections = make_sections()
+        sections["contact_parsed"].pop("title", None)
+        sections["contact"] = {
+            "raw": (
+                "Jane Doe\nFULL STACK DEVELOPER\n"
+                "jane@example.com | 555-123-4567"
+            )
+        }
+        text = document_text(
+            DocxExporter().export_tailored(sections, target_role="Data Analyst")
+        )
+        self.assertIn("FULL STACK DEVELOPER", text)
+        self.assertNotIn("DATA ANALYST", text)
+
+    def test_summary_keeps_the_word_aspiring(self):
+        sections = make_sections()
+        sections["summary"] = {"raw": "Aspiring Full Stack Developer skilled in React.js."}
+        text = document_text(DocxExporter().export_tailored(sections))
+        self.assertIn("Aspiring Full Stack Developer", text)
+
+    def test_layout_labels_are_configurable(self):
+        class CustomLabels(DocxExporter):
+            LAYOUT_LABELS = DocxExporter.LAYOUT_LABELS | {"leftover"}
+
+        sections = make_sections()
+        sections["skills"] = {"raw": "Leftover\nLanguages: Python"}
+        default_text = document_text(DocxExporter().export_tailored(sections))
+        custom_text = document_text(CustomLabels().export_tailored(sections))
+        self.assertIn("Leftover", default_text)
+        self.assertNotIn("Leftover", custom_text)
+
+
 if __name__ == "__main__":
     unittest.main()
