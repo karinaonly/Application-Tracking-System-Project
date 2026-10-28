@@ -7,12 +7,24 @@ export interface User {
   created_at: string
 }
 
+// D2: structured JD parse stored on save (required/preferred skills, tools,
+// seniority). Absent or empty for jobs saved before the parser existed.
+export interface ExtractedKeywords {
+  required_skills: string[]
+  preferred_skills: string[]
+  other_skills: string[]
+  tools: string[]
+  seniority: string
+  min_years_experience: number | null
+}
+
 export interface JobDescription {
   id: string
   title: string
   company: string | null
   raw_text: string
   url: string | null
+  extracted_keywords?: ExtractedKeywords
   created_at: string
 }
 

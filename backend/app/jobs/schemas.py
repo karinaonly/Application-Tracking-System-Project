@@ -18,4 +18,5 @@ class JobResponse(BaseModel):
     company: Optional[str] = None
     raw_text: str
     url: Optional[str] = None
+    extracted_keywords: dict = {}
     created_at: datetime

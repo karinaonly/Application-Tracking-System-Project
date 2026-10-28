@@ -242,6 +242,23 @@ export default function JobDescriptions({ navigate, addToast }: PageProps) {
                   </div>
                 </div>
                 <p className="text-xs text-mid line-clamp-2">{jd.raw_text}</p>
+                {jd.extracted_keywords && (jd.extracted_keywords.required_skills.length > 0 || jd.extracted_keywords.seniority !== "unspecified") && (
+                  <div className="flex items-center gap-1.5 flex-wrap mt-3">
+                    {jd.extracted_keywords.seniority !== "unspecified" && (
+                      <span className="text-[10px] font-medium uppercase tracking-wide text-navy bg-off rounded-full px-2 py-0.5">
+                        {jd.extracted_keywords.seniority}{jd.extracted_keywords.min_years_experience != null ? ` · ${jd.extracted_keywords.min_years_experience}+ yrs` : ""}
+                      </span>
+                    )}
+                    {jd.extracted_keywords.required_skills.slice(0, 6).map(skill => (
+                      <span key={skill} className="text-[10px] text-mid border border-edge rounded-full px-2 py-0.5">
+                        {skill}
+                      </span>
+                    ))}
+                    {jd.extracted_keywords.required_skills.length > 6 && (
+                      <span className="text-[10px] text-dim">+{jd.extracted_keywords.required_skills.length - 6} more</span>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>
