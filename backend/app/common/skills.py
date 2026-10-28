@@ -232,11 +232,15 @@ HARD_SKILL_CATEGORIES: dict[str, list[str]] = {
         "TDD", "Quality Assurance",
     ],
     "Security": ["JWT", "OAuth", "Authentication", "Authorization"],
-    "Process & Tools": [
-        "Agile", "Scrum", "Kanban", "Jira", "Confluence", "Swagger",
-        "System Design", "Object-Oriented Programming", "Design Patterns",
-        "Figma",
+    # Paradigms and methodologies are not tools. Keeping them out of
+    # "Process & Tools" matters because that category's label keywords include
+    # the generic word "tools", which otherwise matches a resume line like
+    # "DevOps & Tools" and files OOP under DevOps (caught live).
+    "Concepts": [
+        "Object-Oriented Programming", "Design Patterns", "System Design",
+        "Agile", "Scrum", "Kanban",
     ],
+    "Process & Tools": ["Jira", "Confluence", "Swagger", "Figma"],
     "Mobile": ["Android", "iOS", "React Native", "Flutter"],
     "Business": [
         "Project Management", "Customer Service", "Data Entry",
@@ -253,21 +257,26 @@ SKILL_CATEGORY_LOOKUP: dict[str, str] = {
 
 # Words that identify a resume's own skills label as one of our categories.
 # Matching is whole-word and per-category, so "DevOps & Tools" can accept both
-# Cloud & DevOps skills and the design tools that belong to Process & Tools.
+# Cloud & DevOps skills and the tools that belong to Process & Tools. Generic
+# words ("tools") must NOT appear in a category that would otherwise swallow
+# unrelated skills: "tools" is what used to file OOP under "DevOps & Tools".
 CATEGORY_LABEL_KEYWORDS: dict[str, tuple[str, ...]] = {
     "Languages": ("language", "languages", "programming"),
     "Frontend": ("frontend", "front end", "ui", "client side", "web"),
     "Backend": ("backend", "back end", "server", "framework", "frameworks",
                 "api", "apis", "orm", "orms"),
     "Databases": ("database", "databases", "db", "storage"),
+    # No "tools"/"tooling" here: "DevOps & Tools" already matches via "devops",
+    # and owning the generic word made every tool-looking label cloud-related.
     "Cloud & DevOps": ("cloud", "devops", "dev ops", "infrastructure",
-                       "tools", "tooling", "version control", "ci/cd",
-                       "platform"),
+                       "version control", "ci/cd", "platform"),
     "Data & ML": ("data", "analytics", "machine learning", "ml", "ai"),
     "Testing": ("testing", "test", "qa", "quality"),
     "Security": ("security", "auth", "authentication", "authorization"),
-    "Process & Tools": ("process", "processes", "methodology", "tools",
-                        "tooling", "practices", "project"),
+    "Concepts": ("concept", "concepts", "principle", "principles", "paradigm",
+                 "methodology", "methodologies", "practices", "agile",
+                 "scrum", "kanban"),
+    "Process & Tools": ("process", "processes", "tools", "tooling", "project"),
     "Mobile": ("mobile", "android", "ios"),
     "Business": ("business", "general", "soft"),
 }

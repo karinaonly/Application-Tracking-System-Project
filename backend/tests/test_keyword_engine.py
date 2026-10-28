@@ -144,6 +144,25 @@ class SkillCategoryTests(unittest.TestCase):
         self.assertTrue(label_matches_category("DevOps & Tools", "Process & Tools"))
         self.assertFalse(label_matches_category("Languages", "Databases"))
 
+    def test_paradigms_do_not_match_a_tools_label(self):
+        # Caught live: OOP was filed under "DevOps & Tools" because the
+        # Process & Tools label keywords contained the generic word "tools".
+        from app.common.skills import label_matches_category, skill_category
+
+        self.assertEqual(skill_category("Object-Oriented Programming"), "Concepts")
+        self.assertEqual(skill_category("Design Patterns"), "Concepts")
+        self.assertFalse(label_matches_category("DevOps & Tools", "Concepts"))
+        self.assertFalse(label_matches_category("Languages", "Concepts"))
+
+    def test_actual_tools_still_match_a_tools_label(self):
+        from app.common.skills import label_matches_category, skill_category
+
+        self.assertEqual(skill_category("Figma"), "Process & Tools")
+        self.assertEqual(skill_category("Jira"), "Process & Tools")
+        self.assertTrue(label_matches_category("DevOps & Tools", "Process & Tools"))
+        # ...and the label is still recognised as cloud/devops for real skills
+        self.assertTrue(label_matches_category("DevOps & Tools", "Cloud & DevOps"))
+
 
 if __name__ == "__main__":
     unittest.main()

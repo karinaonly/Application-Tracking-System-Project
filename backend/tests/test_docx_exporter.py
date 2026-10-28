@@ -289,6 +289,34 @@ class KeywordFilterTests(unittest.TestCase):
         out = DocxExporter()._filter_keywords("", ["Communication", "Docker"])
         self.assertEqual(out, ["Docker"])
 
+    def test_paradigm_is_not_filed_under_a_tools_line(self):
+        # Live bug: confirmed OOP rendered as
+        # "DevOps & Tools: Docker, Nginx, VPS, Git, GitHub, Figma,
+        #  Object-Oriented Programming" — a paradigm is not a DevOps tool.
+        sections = make_sections()
+        sections["skills"] = {"raw": (
+            "Languages: Python, JavaScript\n"
+            "DevOps & Tools: Docker, Git, Figma"
+        )}
+        text = document_text(
+            DocxExporter().export_tailored(
+                sections, missing_keywords=["Object-Oriented Programming"]
+            )
+        )
+        self.assertNotIn(
+            "DevOps & Tools: Docker, Git, Figma, Object-Oriented Programming", text
+        )
+        self.assertIn("Additional Skills: Object-Oriented Programming", text)
+
+    def test_real_tools_still_fold_into_a_tools_line(self):
+        sections = make_sections()
+        sections["skills"] = {"raw": "DevOps & Tools: Docker, Git"}
+        text = document_text(
+            DocxExporter().export_tailored(sections, missing_keywords=["Figma"])
+        )
+        self.assertIn("DevOps & Tools: Docker, Git, Figma", text)
+        self.assertNotIn("Additional Skills", text)
+
 
 class HeaderTitleTests(unittest.TestCase):
     """A4: the export shows the resume's own title, never the job's by default."""
