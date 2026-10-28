@@ -257,6 +257,7 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
 
 - [ ] **D1 (P0): Before/after re-scoring**
   Analyze the tailored version and show the improvement (their headline "35% → 83%" feature).
+  ✅ *Done 2026-10-28: after the AI rewrites, `analyze()` re-runs the bullet analyzer and (when a job was scored) the keyword engine on the tailored text — same bullet population as the before-pass, with only applied rewrites substituted (raw-text replacement tolerates PDF line wraps). The report stores an `improvement` block (`before`/`after` overall + bullet/keyword scores, `applied_rewrites`/`flagged_bullets`); it is omitted when no rewrite changed a bullet. ATS compatibility carries over unchanged (format-based — rewrites don't touch it, and the claim guard forbids invented metrics, so the after number is never faked). The Analysis page shows a "Projected After Tailoring" panel: strikethrough before score → after score with a delta chip and per-component deltas. Covered by 3 tests in `tests/test_resume_service.py`.*
 
 - [ ] **D2 (P1): Real JD parser** · `jobs/models.py`, `jobs/router.py`
   `extracted_keywords` exists but is never filled.
@@ -398,10 +399,10 @@ Counts verified against the item list on 2026-10-23. (F14 is unused; numbering j
 | A. Bugs | 22 | 13 |
 | B. Scoring | 11 | 7 |
 | C. AI Rewriter | 13 | 10 |
-| D. Features | 8 | 0 |
+| D. Features | 8 | 1 |
 | E. Security & Config | 6 | 4 |
 | F. Hygiene | 17 | 9 |
-| **Total** | **77** | **43** |
+| **Total** | **77** | **44** |
 
 Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrites from Groq, no fallbacks), A13 (a real resume export keeps its tech spellings), E1 (empty `JWT_SECRET` aborts startup), E2 (allowed preflight 200 / foreign origin 400), and E5 (zero SQL-echo lines in the live log). A14's new certifications/languages sections are fixture-tested because the current real resume has neither; A19 is build-verified but still needs a UI click-through to become 🟢. The rest of the C section remains unit-tested only (🟡) until each item is exercised individually.
 
@@ -411,6 +412,7 @@ Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrit
 
 | Date | Item(s) | What changed | Notes |
 |---|---|---|---|
+| 2026-10-28 | D1 | Before/after re-scoring is live: after AI rewrites, `analyze()` re-scores the tailored text (bullet analyzer over the same full bullet population with applied rewrites substituted; keyword engine re-run against the tailored raw text with PDF line-wrap-tolerant replacement) and stores a before/after `improvement` block in the report. The Analysis page shows a "Projected After Tailoring" panel (before → after overall with delta chip, per-component deltas, and an honest note: ATS unchanged — it is format-based, and no invented metrics are allowed). Verified against the real resume: 6/6 rewrites applied, before and after both 62.5 bullet impact (like-for-like swaps — honest neutral, not faked improvement). | 148 backend tests pass (3 new improvement tests); `tsc --noEmit` + `bun run build` pass; live run through the real Groq provider. Counts: D 1 → 44 done. |
 | 2026-10-28 | A18 (also marks A19 🟢) | Export now uses the analysis the user is viewing instead of blindly "the latest": `GET /resumes/{id}/export` accepts `analysis_id` (validated to belong to that resume, `AnalysisNotFoundError` otherwise) and the frontend pins it everywhere an analysis is in view — Analysis page and Dashboard both pass the displayed analysis's id; Upload-page exports keep the latest-analysis default since no analysis is in view there. A19's upload → analyze (selected job) → export click-through was confirmed live by the user, closing the last undone bug in section A. | 145 backend tests pass (3 new export-selection tests); `tsc --noEmit` + `bun run build` pass. Counts: A 13 → 43 done. |
 | 2026-10-28 | A22 | Export click-through found tofu boxes (□) in project bullets: Groq rewrites stored in the report contain U+2011 non-breaking hyphens, which several DOCX viewers cannot render; the same pass also split "NestJS" into "Nest JS". Unrenderable dash glyphs are now normalized to ASCII at AI-output creation (`ai_rewriter`) and defensively at every exporter consumption point (structured bullets, rewrites, raw lines); `NestJS` added to canonical tech terms. En/em dashes (" — " separators) intentionally preserved. Existing stored report now exports clean without re-analyzing. | 142 backend tests pass (5 new: exporter glyph + NestJS tests, rewriter glyph test). Verified by regenerating the DOCX from the stored report: 6 U+2011 occurrences before → 0 after. Counts: A 12 → 42 done. |
 | 2026-10-28 | A15 (follow-up) | Real-resume click-through caught an A15 regression: "Languages: JavaScript…" under TECHNICAL SKILLS was mistaken for a LANGUAGES section header, eating the skills list. Inline headers now require an ALL-CAPS label or a preceding blank line. Also fixed pre-existing issues the click-through exposed: `_clean_company` no longer dashes inside compounds ("486-Hour", "Full-Stack"), restores "\|" glyphs extracted as "I", strips merged left-column labels from meta lines, and merges wrapped company names; `_clean_degree` dedupes "Senior High Senior High School…" and strips merged "College" prefixes; skills drop category labels. The stored resume was re-parsed in place. | 137 backend tests pass (8 new real-pattern tests). Real resume verified: correct section order, clean skills chips, "Synchores Information Technology Solutions \| 486-Hour \| Imus, Cavite", both education entries intact. Counts unchanged (41 done). |

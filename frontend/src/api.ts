@@ -77,6 +77,14 @@ export interface ResumeAnalysis {
     ai_rewritten_examples?: Record<string, string | { moderate?: string; aggressive?: string; ai_output?: string; source?: string; error?: string; guard?: { status: string; reasons: string[]; retried: boolean; rejected_variants?: string[] } }>
     overall_score?: number
     weights_used?: Record<string, number>
+    // D1: before/after re-scoring of the AI-tailored bullets. Absent when no
+    // rewrite changed a bullet (nothing to compare).
+    improvement?: {
+      applied_rewrites: number
+      flagged_bullets: number
+      before: { overall: number; bullets: number | null; keywords: number | null }
+      after: { overall: number; bullets: number | null; keywords: number | null }
+    }
   }
   created_at: string
 }

@@ -292,6 +292,9 @@ export default function Analysis({ navigate, addToast }: PageProps) {
   const overall = analysis.overall_score
   const verdict = overall >= 75 ? "ATS-Ready!" : overall >= 50 ? "Almost there!" : "Needs significant work"
   const verdictColor = overall >= 75 ? "#00C9A7" : overall >= 50 ? "#D97706" : "#FF4757"
+  // D1: projected after-tailoring scores (absent when no rewrite changed a bullet)
+  const improvement = report?.improvement
+  const deltaPct = (v: number | null | undefined) => (v == null ? null : Math.round(v))
 
   return (
     <div className="min-h-screen bg-warm pb-28">
@@ -368,6 +371,54 @@ export default function Analysis({ navigate, addToast }: PageProps) {
             </div>
           </div>
         </div>
+
+        {/* D1: projected improvement from the applied AI rewrites */}
+        {improvement && (() => {
+          const before = improvement.before
+          const after = improvement.after
+          const delta = Math.round(after.overall - before.overall)
+          const rows = [
+            { label: "Bullet Impact", from: deltaPct(before.bullets), to: deltaPct(after.bullets) },
+            { label: "Keyword Match", from: deltaPct(before.keywords), to: deltaPct(after.keywords) },
+          ] as { label: string; from: number | null; to: number | null }[]
+          return (
+            <div className="bg-surface rounded-2xl border border-edge p-6 mb-6">
+              <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                <p className="text-xs font-semibold text-mid uppercase tracking-wider">Projected After Tailoring</p>
+                <span className="text-[11px] text-mid bg-off rounded-full px-2.5 py-1">
+                  {improvement.applied_rewrites} of {improvement.flagged_bullets} flagged bullets rewritten
+                </span>
+              </div>
+              <div className="flex items-center gap-4 mb-4 flex-wrap">
+                <span className="font-code text-2xl text-mid line-through decoration-edge">{Math.round(before.overall)}</span>
+                <span className="text-mid">→</span>
+                <span className="font-code text-4xl font-medium text-teal">{Math.round(after.overall)}</span>
+                {delta !== 0 && (
+                  <span className={`font-code text-sm font-semibold rounded-full px-2.5 py-1 ${delta > 0 ? "text-teal bg-teal/10" : "text-red bg-red/10"}`}>
+                    {delta > 0 ? "+" : ""}{delta} pts
+                  </span>
+                )}
+              </div>
+              <div className="space-y-2">
+                {rows.map(row => (
+                  <div key={row.label} className="flex items-center justify-between text-sm">
+                    <span className="text-mid">{row.label}</span>
+                    {row.to != null ? (
+                      <span className="font-code text-navy">
+                        {row.from ?? "N/A"} → <span className="font-semibold text-teal">{row.to}</span>
+                      </span>
+                    ) : (
+                      <span className="font-code text-mid">N/A</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-mid bg-off rounded-lg px-3 py-2 mt-4">
+                Scores re-computed with the AI-rewritten bullets in place. ATS compatibility stays the same — it measures formatting, not wording. Run Re-Analyze against a job to apply the tailoring permanently.
+              </p>
+            </div>
+          )
+        })()}
 
         {/* 3 breakdown cards */}
         <div className="grid md:grid-cols-3 gap-4 mb-6">

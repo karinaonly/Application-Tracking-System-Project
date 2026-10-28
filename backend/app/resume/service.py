@@ -2,6 +2,7 @@ from sqlmodel import Session, select
 from uuid import UUID
 from fastapi import UploadFile, HTTPException
 import os
+import re
 
 from app.resume.models import Resume, ResumeAnalysis
 from app.jobs.models import JobDescription
@@ -92,13 +93,14 @@ class ResumeService:
             "missing_keywords": [],
         }
         target_role = ""
+        job_obj = None
         if job_id:
             # A17: never analyze against another user's job (or a nonexistent one)
-            job = self.session.get(JobDescription, job_id)
-            if not job or job.user_id != user_id:
+            job_obj = self.session.get(JobDescription, job_id)
+            if not job_obj or job_obj.user_id != user_id:
                 raise JobNotFoundError()
-            target_role = job.title
-            kw_res = self.kw_engine.analyze(resume.raw_text, job.raw_text)
+            target_role = job_obj.title
+            kw_res = self.kw_engine.analyze(resume.raw_text, job_obj.raw_text)
 
         overall, weights_used = compute_overall({
             "ats": ats_res["score"],
@@ -119,6 +121,13 @@ class ResumeService:
             missing_keywords=kw_res.get("missing_keywords", []),
         ) if flagged else {}
 
+        # D1: before/after re-scoring — re-run the analyzers on the tailored
+        # text (only rewrites that actually changed a bullet) so the report can
+        # show the projected improvement honestly.
+        improvement = self._score_improvement(
+            resume, bullet_entries, bullet_res, kw_res, ats_res, overall, rewritten, job_obj
+        )
+
         analysis = ResumeAnalysis(
             resume_id=resume.id,
             job_id=job_id,
@@ -133,13 +142,89 @@ class ResumeService:
                 "bullet_analysis": bullet_res,
                 "keyword_analysis": kw_res,
                 "grammar": grammar_res,
-                "ai_rewritten_examples": rewritten
+                "ai_rewritten_examples": rewritten,
+                "improvement": improvement,
             }
         )
         self.session.add(analysis)
         self.session.commit()
         self.session.refresh(analysis)
         return analysis
+
+    @staticmethod
+    def _replace_bullet_text(text: str, original: str, replacement: str) -> str:
+        """Replace `original` in raw text, tolerating PDF line wraps (the parsed
+        bullet is 'React.js, NestJS, and MySQL' while raw_text stores
+        'React.js, NestJS,\\nand MySQL'). Returns text unchanged if not found."""
+        pattern = r"\s+".join(re.escape(w) for w in original.split())
+        return re.sub(pattern, lambda _m: replacement, text, count=1)
+
+    def _score_improvement(
+        self,
+        resume: Resume,
+        bullet_entries: list,
+        before_bullets: dict,
+        before_keywords: dict,
+        ats_res: dict,
+        before_overall: float,
+        rewritten: dict,
+        job_obj: JobDescription | None,
+    ) -> dict | None:
+        # Only rewrites that actually changed a bullet contribute — withheld or
+        # fallback rewrites are already identical to the original.
+        applied = {
+            orig: opt for orig, opt in rewritten.items()
+            if isinstance(opt, dict)
+            and opt.get("ai_output")
+            and opt["ai_output"].strip() != orig.strip()
+        }
+        if not applied:
+            return None
+
+        # Same population as the before-pass (ALL experience/projects entries),
+        # with only the rewritten bullets substituted — otherwise the two
+        # scores are computed over different bullet sets and lie.
+        tailored_entries = [
+            {
+                **entry,
+                "bullets": [
+                    applied[b]["ai_output"] if b in applied else b
+                    for b in entry.get("bullets", [])
+                ],
+            }
+            for entry in bullet_entries
+        ]
+        after_bullets = self.bullet_analyzer.analyze_bullets(tailored_entries)
+
+        after_keywords: dict | None = None
+        if job_obj and before_keywords.get("score") is not None:
+            tailored_text = resume.raw_text
+            for orig, opt in applied.items():
+                tailored_text = self._replace_bullet_text(tailored_text, orig, opt["ai_output"])
+            after_keywords = self.kw_engine.analyze(tailored_text, job_obj.raw_text)
+
+        # ATS compatibility is format-based: bullet rewrites don't change it, so
+        # it carries over unchanged rather than being faked as improved.
+        after_overall, _ = compute_overall({
+            "ats": ats_res["score"],
+            "bullets": after_bullets.get("score"),
+            "keywords": (after_keywords or {}).get("score"),
+        })
+
+        return {
+            "applied_rewrites": len(applied),
+            "flagged_bullets": len(rewritten),
+            "before": {
+                "overall": before_overall,
+                "bullets": before_bullets.get("score"),
+                "keywords": before_keywords.get("score"),
+            },
+            "after": {
+                "overall": after_overall,
+                "bullets": after_bullets.get("score"),
+                "keywords": (after_keywords or {}).get("score"),
+            },
+        }
 
     def export_docx(
         self,

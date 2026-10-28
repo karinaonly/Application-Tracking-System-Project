@@ -82,6 +82,116 @@ def make_analysis(resume_id, report=None) -> ResumeAnalysis:
     )
 
 
+class ImprovementScoringTests(unittest.TestCase):
+    """D1: analyze() re-scores the tailored bullets and stores a before/after block."""
+
+    def setUp(self):
+        self.service = ResumeService(MagicMock())
+        self.service.ats_checker = MagicMock()
+        self.service.ats_checker.check.return_value = {"score": 80.0, "passed": [], "issues": []}
+        self.service.grammar = MagicMock()
+        self.service.grammar.check.return_value = {"score": None}
+        self.service.kw_engine = MagicMock()
+        self.service.kw_engine.analyze.return_value = {
+            "score": 60.0, "score_available": True, "matched_keywords": ["Python"],
+            "missing_keywords": ["Docker"], "reason": None,
+        }
+        self.service.ai = MagicMock()
+
+    def _make_resume(self, owner_id) -> Resume:
+        return Resume(
+            id=uuid4(), user_id=owner_id, filename="r.pdf", file_path="r.pdf",
+            file_type=".pdf",
+            raw_text="Summary line here\nDid tasks for the team\nSkills: Python",
+            parsed_data={"sections": {
+                "experience_parsed": [{
+                    "title": "Dev", "company": "Acme", "dates": "2024",
+                    "bullets": ["Did tasks for the team"],
+                }],
+            }, "metadata": {}},
+        )
+
+    def _mock_analyzers(self, before_score, after_score):
+        def analyze_side_effect(entries):
+            bullets = entries[0]["bullets"]
+            if bullets == ["Did tasks for the team"]:
+                return {
+                    "score": before_score, "score_available": True,
+                    "details": [{"original": "Did tasks for the team", "has_metrics": False, "verb_type": "weak"}],
+                }
+            return {"score": after_score, "score_available": True, "details": []}
+
+        analyzer = MagicMock()
+        analyzer.analyze_bullets.side_effect = analyze_side_effect
+        self.service.bullet_analyzer = analyzer
+
+    def _analyze(self, resume):
+        self.service.session.get.side_effect = lambda model, _id: resume if model is Resume else None
+        return self.service.analyze(resume.id, resume.user_id)
+
+    def test_improvement_block_when_rewrites_applied(self):
+        owner_id = uuid4()
+        resume = self._make_resume(owner_id)
+        self._mock_analyzers(40.0, 85.0)
+        self.service.ai.rewrite_bullets.return_value = {
+            "Did tasks for the team": {
+                "ai_output": "Led 5-member team", "source": "groq",
+            },
+        }
+
+        analysis = self._analyze(resume)
+        imp = analysis.report["improvement"]
+        self.assertEqual(imp["before"]["bullets"], 40.0)
+        self.assertEqual(imp["after"]["bullets"], 85.0)
+        self.assertEqual(imp["applied_rewrites"], 1)
+        self.assertIsNone(imp["after"]["keywords"])  # no job selected
+        # after overall re-computed with the same ATS rank
+        self.assertIsNotNone(imp["after"]["overall"])
+
+    def test_no_improvement_block_when_nothing_changed(self):
+        owner_id = uuid4()
+        resume = self._make_resume(owner_id)
+        self._mock_analyzers(40.0, 40.0)
+        # Rewrite withheld: ai_output identical to original
+        self.service.ai.rewrite_bullets.return_value = {
+            "Did tasks for the team": {
+                "ai_output": "Did tasks for the team", "source": "guard_rejected",
+            },
+        }
+
+        analysis = self._analyze(resume)
+        self.assertIsNone(analysis.report["improvement"])
+
+    def test_keyword_rescore_runs_against_tailored_text(self):
+        owner_id = uuid4()
+        resume = self._make_resume(owner_id)
+        self._mock_analyzers(40.0, 85.0)
+        self.service.ai.rewrite_bullets.return_value = {
+            "Did tasks for the team": {"ai_output": "Led 5-member team with Docker"},
+        }
+
+        job_id = uuid4()
+        job = JobDescription(id=job_id, user_id=owner_id, title="Backend", raw_text="Python Docker")
+        self.service.session.get.side_effect = lambda model, _id: (
+            resume if model is Resume else job if model is JobDescription else None
+        )
+
+        def kw_side_effect(resume_text, jd_text):
+            covered = "Docker" in resume_text
+            return {
+                "score": 100.0 if covered else 50.0, "score_available": True,
+                "matched_keywords": [], "missing_keywords": [], "reason": None,
+            }
+
+        self.service.kw_engine.analyze.side_effect = kw_side_effect
+
+        analysis = self.service.analyze(resume.id, owner_id, job_id)
+        imp = analysis.report["improvement"]
+        # raw_text has no "Docker"; the tailored replacement does — after keywords re-scored
+        self.assertEqual(imp["before"]["keywords"], 50.0)
+        self.assertEqual(imp["after"]["keywords"], 100.0)
+
+
 class ExportAnalysisSelectionTests(unittest.TestCase):
     """A18: export must use the analysis the user is viewing, not blindly 'the latest'."""
 
