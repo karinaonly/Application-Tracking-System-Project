@@ -248,12 +248,14 @@ class ResumeService:
             statement = select(ResumeAnalysis).where(ResumeAnalysis.resume_id == resume_id).order_by(ResumeAnalysis.created_at.desc())
             analysis = self.session.exec(statement).first()
 
-        missing_keywords = []
+        confirmed_keywords = []
         rewritten_bullets = {}
         target_role = ""
 
         if analysis and analysis.report:
-            missing_keywords = analysis.report.get("keyword_analysis", {}).get("missing_keywords", [])
+            # A3: only keywords the user confirmed they actually have reach
+            # the export — raw missing keywords are never injected blind.
+            confirmed_keywords = analysis.report.get("confirmed_keywords", [])
             rewritten_bullets = analysis.report.get("ai_rewritten_examples", {})
 
             # Fetch target job title if attached
@@ -264,10 +266,69 @@ class ResumeService:
 
         return self.exporter.export_tailored(
             sections=resume.parsed_data.get("sections", {}),
-            missing_keywords=missing_keywords,
+            missing_keywords=confirmed_keywords,
             rewritten_bullets=rewritten_bullets,
             target_role=target_role
         )
+
+    # ------------------------------------------------------------------ #
+    # A3: user-confirmed missing keywords
+    # ------------------------------------------------------------------ #
+
+    def confirm_keywords(
+        self, resume_id: UUID, analysis_id: UUID, user_id: UUID, keywords: list
+    ) -> list[str]:
+        """Store the missing keywords the user confirms they actually have.
+
+        Each keyword must belong to this analysis's ``missing_keywords``
+        (case-insensitive match, canonical spelling stored) — nothing is
+        added to the resume without the user's explicit confirmation.
+        """
+        resume = self.session.get(Resume, resume_id)
+        if not resume or resume.user_id != user_id:
+            raise ResumeNotFoundError()
+        analysis = self.session.get(ResumeAnalysis, analysis_id)
+        if not analysis or analysis.resume_id != resume_id:
+            raise AnalysisNotFoundError()
+
+        missing = (analysis.report or {}).get("keyword_analysis", {}).get(
+            "missing_keywords", []
+        )
+        canonical = {m.lower(): m for m in missing}
+
+        confirmed: list[str] = []
+        seen: set[str] = set()
+        unknown: list[str] = []
+        for kw in keywords:
+            cleaned = str(kw).strip()
+            match = canonical.get(cleaned.lower())
+            if not match:
+                unknown.append(cleaned)
+                continue
+            if match.lower() in seen:
+                continue
+            seen.add(match.lower())
+            confirmed.append(match)
+
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Not in this analysis's missing keywords: "
+                    + ", ".join(unknown)
+                ),
+            )
+        if not confirmed:
+            raise HTTPException(status_code=400, detail="No keywords to confirm")
+
+        report = analysis.report or {}
+        report["confirmed_keywords"] = confirmed
+        # Reassign so SQLModel detects the mutation of the JSON column.
+        analysis.report = report
+        self.session.add(analysis)
+        self.session.commit()
+        self.session.refresh(analysis)
+        return confirmed
 
     # ------------------------------------------------------------------ #
     # D3: per-job tailored resume versions
@@ -399,10 +460,11 @@ class ResumeService:
             raise VersionNotFoundError()
 
         analysis = self.session.get(ResumeAnalysis, version.analysis_id)
-        missing_keywords = []
+        confirmed_keywords = []
         target_role = ""
         if analysis and analysis.report:
-            missing_keywords = analysis.report.get("keyword_analysis", {}).get("missing_keywords", [])
+            # A3: confirmed keywords only — same rule as export_docx.
+            confirmed_keywords = analysis.report.get("confirmed_keywords", [])
         if version.job_id:
             job = self.session.get(JobDescription, version.job_id)
             if job:
@@ -410,7 +472,7 @@ class ResumeService:
 
         data = self.exporter.export_tailored(
             sections=version.parsed_data.get("sections", {}),
-            missing_keywords=missing_keywords,
+            missing_keywords=confirmed_keywords,
             rewritten_bullets={},
             target_role=target_role,
         )

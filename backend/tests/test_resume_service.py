@@ -256,6 +256,135 @@ class ExportAnalysisSelectionTests(unittest.TestCase):
         kwargs = self.exporter.export_tailored.call_args.kwargs
         self.assertEqual(kwargs["rewritten_bullets"], {"b": {"ai_output": "LATEST"}})
 
+    def test_export_passes_only_confirmed_keywords(self):
+        # A3: raw missing keywords never reach the exporter — only the
+        # subset the user confirmed they actually have.
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        analysis = make_analysis(resume.id, report={
+            "keyword_analysis": {"missing_keywords": ["Docker", "Kubernetes", "Terraform"]},
+            "confirmed_keywords": ["Docker"],
+        })
+
+        self.service.session.get.side_effect = lambda model, _id: resume if model is Resume else None
+        fake_result = MagicMock()
+        fake_result.first.return_value = analysis
+        self.service.session.exec.return_value = fake_result
+
+        self.service.export_docx(resume.id, owner_id)
+
+        kwargs = self.exporter.export_tailored.call_args.kwargs
+        self.assertEqual(kwargs["missing_keywords"], ["Docker"])
+
+    def test_export_without_confirmation_passes_no_keywords(self):
+        # A3: an analysis with no confirmed keywords exports no additional
+        # skills — the pre-A3 behavior silently ignored them anyway.
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        analysis = make_analysis(resume.id, report={
+            "keyword_analysis": {"missing_keywords": ["Docker"]},
+        })
+
+        self.service.session.get.side_effect = lambda model, _id: resume if model is Resume else None
+        fake_result = MagicMock()
+        fake_result.first.return_value = analysis
+        self.service.session.exec.return_value = fake_result
+
+        self.service.export_docx(resume.id, owner_id)
+
+        kwargs = self.exporter.export_tailored.call_args.kwargs
+        self.assertEqual(kwargs["missing_keywords"], [])
+
+
+class ConfirmKeywordsTests(unittest.TestCase):
+    """A3: the user confirms which missing keywords they actually have."""
+
+    def setUp(self):
+        self.service = ResumeService(MagicMock())
+
+    def _wire(self, resume, analysis):
+        def fake_get(model, _id):
+            if model is Resume:
+                return resume
+            if model is ResumeAnalysis:
+                return analysis
+            return None
+
+        self.service.session.get.side_effect = fake_get
+
+    def test_confirmed_keywords_stored_with_canonical_spelling(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        analysis = make_analysis(resume.id, report={
+            "keyword_analysis": {"missing_keywords": ["PostgreSQL", "docker compose", "Terraform"]},
+        })
+        self._wire(resume, analysis)
+
+        confirmed = self.service.confirm_keywords(
+            resume.id, analysis.id, owner_id, ["postgresql", "Docker Compose"]
+        )
+
+        # canonical spellings from the analysis's own missing list
+        self.assertEqual(confirmed, ["PostgreSQL", "docker compose"])
+        self.assertEqual(analysis.report["confirmed_keywords"], confirmed)
+        self.service.session.add.assert_called()
+        self.service.session.commit.assert_called()
+
+    def test_keyword_outside_missing_list_is_rejected(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        analysis = make_analysis(resume.id, report={
+            "keyword_analysis": {"missing_keywords": ["Docker"]},
+        })
+        self._wire(resume, analysis)
+
+        with self.assertRaises(HTTPException) as ctx:
+            self.service.confirm_keywords(resume.id, analysis.id, owner_id, ["Kubernetes"])
+        self.assertEqual(ctx.exception.status_code, 400)
+        # nothing stored when the request is rejected
+        self.assertNotIn("confirmed_keywords", analysis.report)
+        self.service.session.commit.assert_not_called()
+
+    def test_empty_selection_is_rejected(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        analysis = make_analysis(resume.id, report={
+            "keyword_analysis": {"missing_keywords": ["Docker"]},
+        })
+        self._wire(resume, analysis)
+
+        with self.assertRaises(HTTPException) as ctx:
+            self.service.confirm_keywords(resume.id, analysis.id, owner_id, [])
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_foreign_analysis_is_rejected(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        foreign = make_analysis(uuid4(), report={
+            "keyword_analysis": {"missing_keywords": ["Docker"]},
+        })
+        self._wire(resume, foreign)
+
+        with self.assertRaises(AnalysisNotFoundError):
+            self.service.confirm_keywords(resume.id, foreign.id, owner_id, ["Docker"])
+
+    def test_foreign_resume_is_rejected(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        analysis = make_analysis(resume.id, report={
+            "keyword_analysis": {"missing_keywords": ["Docker"]},
+        })
+
+        def fake_get(model, _id):
+            if model is Resume:
+                return make_resume(uuid4())  # someone else's resume
+            return None
+
+        self.service.session.get.side_effect = fake_get
+
+        with self.assertRaises(ResumeNotFoundError):
+            self.service.confirm_keywords(resume.id, analysis.id, owner_id, ["Docker"])
+
 
 class VersionTests(unittest.TestCase):
     """D3: per-job tailored resume versions stored server-side."""
@@ -382,7 +511,12 @@ class VersionTests(unittest.TestCase):
         owner_id = uuid4()
         resume = self._make_resume(owner_id)
         job = JobDescription(id=uuid4(), user_id=owner_id, title="Backend Dev", raw_text="jd")
-        analysis = make_analysis(resume.id, report={"keyword_analysis": {"missing_keywords": ["Docker"]}})
+        analysis = make_analysis(resume.id, report={
+            # A3: raw missing keywords must NOT reach the export — only the
+            # user-confirmed subset does.
+            "keyword_analysis": {"missing_keywords": ["Docker", "Kubernetes"]},
+            "confirmed_keywords": ["Docker"],
+        })
         version = ResumeVersion(
             id=uuid4(), resume_id=resume.id, job_id=job.id, analysis_id=analysis.id,
             label="Tailored for Backend Dev",

@@ -54,6 +54,11 @@ TECH_TERM_RE = re.compile(
     re.I,
 )
 
+# A3: confirmed keywords keep their canonical taxonomy spelling ("sql" ->
+# "SQL", "javascript" -> "JavaScript") instead of the lossy .title() casing
+# ("Sql") the old filter produced.
+CANONICAL_SKILL_LOOKUP = {name.lower(): name for name in HARD_SKILLS}
+
 
 class DocxExporter:
     """
@@ -563,6 +568,22 @@ class DocxExporter:
                 r = p.add_run(line)
                 self._force_font(r, size_pt=9.5, color=self.COLOR_BODY_RGB)
 
+        # A3: only keywords the user confirmed they actually have reach the
+        # export, rendered as a standard ATS "Additional Skills" line.
+        # _filter_keywords (previously dead code) drops fluff, duplicates,
+        # and anything the skills text already covers.
+        additional = self._filter_keywords(text, missing_keywords)
+        if additional:
+            p = doc.add_paragraph()
+            p.paragraph_format.space_after = Pt(1)
+            p.paragraph_format.line_spacing = 1.08
+            r_label = p.add_run("Additional Skills: ")
+            self._force_font(
+                r_label, size_pt=9.5, bold=True, color=self.COLOR_BODY_RGB
+            )
+            r_rest = p.add_run(", ".join(additional))
+            self._force_font(r_rest, size_pt=9.5, color=self.COLOR_BODY_RGB)
+
     def _filter_keywords(
         self, skills_text: str, missing_keywords: list[str] | None
     ) -> list[str]:
@@ -581,7 +602,7 @@ class DocxExporter:
             if not (2 < len(k_lower) < 28):
                 continue
             seen.add(k_lower)
-            out.append(cleaned.title())
+            out.append(CANONICAL_SKILL_LOOKUP.get(k_lower, cleaned))
         return out
 
     # ---------------------------------------------------------------- #

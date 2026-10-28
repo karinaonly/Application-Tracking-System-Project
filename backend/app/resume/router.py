@@ -84,6 +84,23 @@ def export_resume(
         headers={"Content-Disposition": f"attachment; filename=ATS_Optimized_Resume.docx"}
     )
 
+@router.post("/{resume_id}/analyses/{analysis_id}/confirm-keywords")
+def confirm_keywords(
+    resume_id: UUID,
+    analysis_id: UUID,
+    body: dict,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    # A3: the user confirms which missing keywords they actually have;
+    # only these are injected into the exported resume's Skills section.
+    keywords = body.get("keywords")
+    if not isinstance(keywords, list):
+        raise HTTPException(status_code=400, detail="keywords must be a list")
+    service = ResumeService(session)
+    confirmed = service.confirm_keywords(resume_id, analysis_id, user.id, keywords)
+    return {"confirmed_keywords": confirmed}
+
 @router.post("/{resume_id}/versions", status_code=201)
 def create_version(
     resume_id: UUID,

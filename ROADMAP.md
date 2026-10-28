@@ -33,9 +33,10 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   "Wrote", "Maintained", and similar verbs return `missing`.
   *Fix:* expand the list, or lemmatize the first word with spaCy ("wrote" → "write").
 
-- [ ] **A3 (P0): Missing keywords never reach the exported resume** · `export/docx_exporter.py`
+- [x] **A3 (P0): Missing keywords never reach the exported resume** · `export/docx_exporter.py`
   `export_tailored` accepts `missing_keywords`, but `_add_skills` ignores them and `_filter_keywords` is never called.
   *Fix:* call `_filter_keywords`, and append the results to the Skills section. Only add skills the user confirms they actually have.
+  ✅ *Done 2026-10-28: no blind keyword injection — the user confirms each keyword first. Backend: `confirm_keywords` service method + `POST /resumes/{resume_id}/analyses/{analysis_id}/confirm-keywords` validates every keyword against that analysis's `missing_keywords` (case-insensitive, canonical spelling stored, unknown keyword or empty selection → 400, foreign analysis/resume → 404) and stores them as `report["confirmed_keywords"]`. Both export paths (`export_docx`, `export_version_docx`) now pass ONLY the confirmed subset to the exporter — raw missing keywords never reach it. Exporter: `_add_skills` finally calls the previously dead `_filter_keywords` (drops fluff, duplicates, anything already in the skills text, length bounds) and appends a standard ATS "Additional Skills: X, Y, Z" line; the filter now preserves canonical taxonomy spelling ("postgresql" → "PostgreSQL") instead of the old lossy `.title()` casing ("Sql"). Frontend: the Keyword Gap card's missing keywords are checkable chips — tick the ones you actually have, hit "Add N skills to my resume", confirmed chips turn teal with a check, with honest copy ("Never confirm a skill you couldn't discuss in an interview"). Covered by 12 new tests (5 exporter, 5 confirm-validation, 2 export-passes-confirmed-only).*
 
 - [ ] **A4 (P0 — raised from P1): Exporter silently overwrites your resume title with the job posting's title** · `export/docx_exporter.py` (`_add_header`, ~line 183)
   Found 2026-09-30 testing a real export: `clean_role = target_role.strip().upper() if target_role else "FULL STACK DEVELOPER"`. Every export replaces your actual professional title (e.g. "Full Stack Developer") with the attached job's title, uppercased, no confirmation. Confirmed in a real export: "FULL STACK DEVELOPER" became "FRONTEND APPRENTICE" for a job titled that way, even though the bullets underneath stayed backend/full-stack. The `"FULL STACK DEVELOPER"` fallback is also hardcoded to this one resume (see original A4 scope below) — a different user with no job attached would get the wrong title too.
@@ -401,13 +402,13 @@ Counts verified against the item list on 2026-10-23. (F14 is unused; numbering j
 
 | Section | Items | Done |
 |---|---|---|
-| A. Bugs | 22 | 13 |
+| A. Bugs | 22 | 14 |
 | B. Scoring | 11 | 7 |
 | C. AI Rewriter | 13 | 10 |
 | D. Features | 8 | 3 |
 | E. Security & Config | 6 | 4 |
 | F. Hygiene | 17 | 11 |
-| **Total** | **77** | **48** |
+| **Total** | **77** | **49** |
 
 Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrites from Groq, no fallbacks), A13 (a real resume export keeps its tech spellings), E1 (empty `JWT_SECRET` aborts startup), E2 (allowed preflight 200 / foreign origin 400), and E5 (zero SQL-echo lines in the live log). A14's new certifications/languages sections are fixture-tested because the current real resume has neither; A19 is build-verified but still needs a UI click-through to become 🟢. The rest of the C section remains unit-tested only (🟡) until each item is exercised individually.
 
@@ -417,6 +418,7 @@ Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrit
 
 | Date | Item(s) | What changed | Notes |
 |---|---|---|---|
+| 2026-10-28 | A3 | Missing keywords now actually reach the exported resume — but only after explicit user confirmation (no blind injection). New `confirm-keywords` endpoint validates each keyword against the analysis's own `missing_keywords` and stores the canonical spellings as `report["confirmed_keywords"]`; both export paths pass only that subset. The exporter's dead `_filter_keywords` is finally called by `_add_skills`, which appends a standard "Additional Skills: …" line (fluff/dupes/already-present filtered; canonical spelling preserved instead of `.title()` mangling "SQL" → "Sql"). Frontend: checkable chips on the Keyword Gap card's missing keywords with an honesty-first confirm button. | 186 backend tests pass (12 new). Counts: A 14, total 49. |
 | 2026-10-28 | F4 | Six new anonymized parser fixtures (8 total), each targeting a layout hazard — and they immediately caught 5 real parser bugs, all fixed: phantom portfolio fields from emails ("carlos.me" — URL regex TLD had no right boundary), involvement-header content leaking into projects as fake entries (now skipped like REFERENCES, orphan lines dropped), "Expected 2026" becoming a bogus education entry (now the graduation date), glued "College" labels swapping school/degree in degree-first layouts, and `_parse_projects` splitting every "Title / Dates / bullets" project in two on its date line (also silently affecting the original classic fixture). Also anonymized the master-layout fixture, which contained a real employer name. Known limitation recorded: arbitrary unrecognized org names still flow into the preceding section — only recognizable involvement headers are skipped. | 174 backend tests pass (6 new fixture tests in `test_section_parser.py`). Counts: F 11 → 48 done. |
 | 2026-10-28 | F3 | README added at the repo root: honesty principles up front (no faked scores, claim guard, format-based ATS), features, tech stack, project layout, backend setup with a new `requirements.txt` (direct deps pinned from the working venv; spaCy model documented as optional with graceful degradation noted), `.env` keys incl. required `JWT_SECRET` + generation command, frontend setup (`bun install`, `VITE_API_URL`), run/test commands, the typical flow, and a pointer to the roadmap. | Docs only; no code changes. Counts: F 10 → 47 done. |
 | 2026-10-28 | D3 | Per-job tailored resume versions are live: `POST /resumes/{id}/versions` stores a real tailored snapshot from an analysis — only rewrites that actually changed a bullet are applied (same honesty rule as D1) into the raw text and every section shape, one version per (resume, job) with upsert-on-re-save, and a 400 rejection when zero rewrites changed anything (an identical copy is not a tailored version). List / export (job-specific DOCX filename, no double-rewriting since bullets are already tailored) / delete endpoints round it out. Frontend: "Save as version for this job" in the improvement panel and teal version chips on Dashboard cards that download the version directly. | 168 backend tests pass (8 new); `tsc --noEmit` + `bun run build` pass; `resume_versions` table auto-created and verified live. Counts: D 3 → 46 done. |

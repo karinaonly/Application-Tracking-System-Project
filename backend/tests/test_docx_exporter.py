@@ -191,5 +191,54 @@ class DocxExporterGlyphTests(unittest.TestCase):
         self.assertNotIn("Nest JS", text)
 
 
+class KeywordFilterTests(unittest.TestCase):
+    """A3: confirmed missing keywords reach the exported Skills section."""
+
+    def test_filter_drops_fluff_duplicates_and_known_skills(self):
+        exporter = DocxExporter()
+        skills = "Languages: Python, JavaScript, TypeScript, SQL"
+        out = exporter._filter_keywords(
+            skills,
+            ["Docker", "docker", "SQL", "great team player", "Go", "x" * 30],
+        )
+        # "docker" deduped, "SQL" already in skills, fluff and length
+        # bounds dropped, "Go" too short
+        self.assertEqual(out, ["Docker"])
+
+    def test_filter_preserves_canonical_spelling(self):
+        exporter = DocxExporter()
+        out = exporter._filter_keywords("", ["postgresql", "javascript", "Kubernetes"])
+        self.assertIn("PostgreSQL", out)
+        self.assertIn("JavaScript", out)
+        self.assertIn("Kubernetes", out)
+        self.assertNotIn("Sql", out)
+        self.assertNotIn("Postgresql", out)
+
+    def test_export_appends_additional_skills_line(self):
+        sections = make_sections()
+        text = document_text(
+            DocxExporter().export_tailored(
+                sections, missing_keywords=["Docker", "Kubernetes"]
+            )
+        )
+        self.assertIn("Additional Skills: Docker, Kubernetes", text)
+
+    def test_export_skips_keyword_already_in_skills(self):
+        sections = make_sections()
+        text = document_text(
+            DocxExporter().export_tailored(
+                sections, missing_keywords=["SQL", "Docker"]
+            )
+        )
+        # SQL is already in the skills line -- not duplicated
+        self.assertIn("Additional Skills: Docker", text)
+        self.assertNotIn("Additional Skills: SQL", text)
+        self.assertNotIn("Additional Skills: Docker, SQL", text)
+
+    def test_export_without_keywords_has_no_additional_skills_line(self):
+        text = document_text(DocxExporter().export_tailored(make_sections()))
+        self.assertNotIn("Additional Skills", text)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -96,6 +96,9 @@ export interface ResumeAnalysis {
       matched_keywords?: string[]
       missing_keywords?: string[]
     }
+    // A3: missing keywords the user confirmed they actually have; only
+    // these are injected into the exported resume's Skills section.
+    confirmed_keywords?: string[]
     grammar?: { typos_found?: Array<{ word: string; suggestion: string }> }
     ai_rewritten_examples?: Record<string, string | { moderate?: string; aggressive?: string; ai_output?: string; source?: string; error?: string; guard?: { status: string; reasons: string[]; retried: boolean; rejected_variants?: string[] } }>
     overall_score?: number
@@ -220,6 +223,19 @@ export async function createVersion(resumeId: string, analysisId: string): Promi
     method: "POST",
     body: JSON.stringify({ analysis_id: analysisId }),
   })
+}
+
+// A3: confirm which missing keywords the user actually has — only these
+// are added to the exported resume's Skills section.
+export async function confirmKeywords(
+  resumeId: string,
+  analysisId: string,
+  keywords: string[]
+): Promise<{ confirmed_keywords: string[] }> {
+  return request<{ confirmed_keywords: string[] }>(
+    `/resumes/${resumeId}/analyses/${analysisId}/confirm-keywords`,
+    { method: "POST", body: JSON.stringify({ keywords }) }
+  )
 }
 
 export async function listVersions(resumeId: string): Promise<ResumeVersionSummary[]> {

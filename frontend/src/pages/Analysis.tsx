@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Download, RefreshCw, ChevronDown, ChevronUp, Copy, CheckCircle, XCircle, AlertTriangle, Lightbulb, BarChart2, Target, Edit3, Zap, BookOpen, ArrowLeftRight, Shield, Save } from "lucide-react"
+import { Download, RefreshCw, ChevronDown, ChevronUp, Copy, CheckCircle, Check, XCircle, AlertTriangle, Lightbulb, BarChart2, Target, Edit3, Zap, BookOpen, ArrowLeftRight, Shield, Save } from "lucide-react"
 import type { PageProps } from "../types"
 import * as api from "../api"
 
@@ -213,6 +213,10 @@ export default function Analysis({ navigate, addToast }: PageProps) {
   const [passedOpen, setPassedOpen] = useState(false)
   const [exportLoading, setExportLoading] = useState(false)
   const [saveVersionLoading, setSaveVersionLoading] = useState(false)
+  // A3: which missing keywords the user ticked as "skills I actually have"
+  const [selectedKws, setSelectedKws] = useState<string[]>([])
+  const [confirmLoading, setConfirmLoading] = useState(false)
+  const [newlyConfirmed, setNewlyConfirmed] = useState<string[]>([])
   const analysis = api.getLastAnalysis()
   const resumeMeta = api.getLastResumeMeta()
 
@@ -246,6 +250,31 @@ export default function Analysis({ navigate, addToast }: PageProps) {
     finally { setSaveVersionLoading(false) }
   }
 
+  // A3: confirm the ticked missing keywords so they reach the exported
+  // resume's Skills section. Honesty rule: only confirm skills you have.
+  const toggleKw = (k: string) => {
+    setSelectedKws(prev => prev.includes(k) ? prev.filter(x => x !== k) : [...prev, k])
+  }
+
+  const handleConfirmKeywords = async () => {
+    const resumeId = api.getLastResumeId()
+    if (!resumeId || !analysis?.id || selectedKws.length === 0) return
+    setConfirmLoading(true)
+    try {
+      const res = await api.confirmKeywords(resumeId, analysis.id, selectedKws)
+      setNewlyConfirmed(res.confirmed_keywords)
+      setSelectedKws([])
+      if (analysis.report) {
+        api.saveLastAnalysis({
+          ...analysis,
+          report: { ...analysis.report, confirmed_keywords: res.confirmed_keywords },
+        })
+      }
+      addToast("success", `${res.confirmed_keywords.length} skill${res.confirmed_keywords.length === 1 ? "" : "s"} will be added to your exported resume.`)
+    } catch (error) { addToast("error", error instanceof Error ? error.message : "Could not confirm keywords") }
+    finally { setConfirmLoading(false) }
+  }
+
   const report = analysis?.report
   // F5: without an analysis there is nothing to show -- never render a zeroed-out report.
   if (!analysis) {
@@ -274,6 +303,12 @@ export default function Analysis({ navigate, addToast }: PageProps) {
   const passedChecks = report?.ats?.passed ?? []
   const matchedKws = report?.keyword_analysis?.matched_keywords ?? []
   const missingKws = report?.keyword_analysis?.missing_keywords ?? []
+  // A3: keywords the user confirmed they actually have (stored on the
+  // analysis + anything confirmed during this visit)
+  const confirmedKws = Array.from(new Set([
+    ...((report?.confirmed_keywords ?? []) as string[]),
+    ...newlyConfirmed,
+  ]))
   const bullets: AnalysisBullet[] = (report?.bullet_analysis?.details ?? []).map(bullet => ({
     text: bullet.original,
     section: bullet.section ?? "Experience",
@@ -574,8 +609,51 @@ export default function Analysis({ navigate, addToast }: PageProps) {
                   <XCircle size={12} /> Missing ({missingKws.length})
                 </p>
                 <div className="flex flex-wrap gap-1.5">
-                  {missingKws.map(k => <KwPill key={k} word={k} matched={false} />)}
+                  {missingKws.map(k => {
+                    const isConfirmed = confirmedKws.includes(k)
+                    const isSelected = selectedKws.includes(k)
+                    if (isConfirmed) {
+                      return (
+                        <span
+                          key={k}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border"
+                          style={{ background: "rgba(0,201,167,0.1)", color: "#00A88A", borderColor: "rgba(0,201,167,0.3)" }}
+                        >
+                          <CheckCircle size={11} /> {k}
+                        </span>
+                      )
+                    }
+                    return (
+                      <button
+                        key={k}
+                        onClick={() => toggleKw(k)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border transition-all cursor-pointer hover:opacity-80"
+                        style={isSelected
+                          ? { background: "#1B2A4A", color: "#FFFFFF", borderColor: "#1B2A4A" }
+                          : { background: "rgba(255,71,87,0.08)", color: "#E53E4B", borderColor: "rgba(255,71,87,0.25)" }
+                        }
+                      >
+                        {isSelected ? <Check size={11} /> : <span className="opacity-60">+</span>}{k}
+                      </button>
+                    )
+                  })}
                 </div>
+                {missingKws.length > 0 && (
+                  <div className="mt-3">
+                    <p className="text-xs text-dim leading-relaxed mb-2">
+                      Tick only the skills you actually have — confirmed keywords are added to the Skills section of your exported resume. Never confirm a skill you couldn't discuss in an interview.
+                    </p>
+                    {selectedKws.length > 0 && (
+                      <button
+                        onClick={handleConfirmKeywords}
+                        disabled={confirmLoading}
+                        className="px-4 py-2 bg-navy text-white text-xs font-semibold rounded-xl hover:bg-navy-light transition-all disabled:opacity-50"
+                      >
+                        {confirmLoading ? "Confirming…" : `Add ${selectedKws.length} skill${selectedKws.length === 1 ? "" : "s"} to my resume`}
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
             <div className="mt-5 p-3 bg-amber/5 border border-amber/20 rounded-xl flex items-start gap-2">
