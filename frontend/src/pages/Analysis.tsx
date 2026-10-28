@@ -414,7 +414,7 @@ export default function Analysis({ navigate, addToast }: PageProps) {
                 ))}
               </div>
               <p className="text-xs text-mid bg-off rounded-lg px-3 py-2 mt-4">
-                Scores re-computed with the AI-rewritten bullets in place. ATS compatibility stays the same — it measures formatting, not wording. Run Re-Analyze against a job to apply the tailoring permanently.
+                Scores re-computed with the AI-rewritten bullets in place. ATS compatibility stays the same — it measures formatting, not wording. Export the DOCX to download a resume with these rewrites applied.
               </p>
             </div>
           )
