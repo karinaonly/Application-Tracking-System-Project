@@ -263,6 +263,20 @@ class SuccessfulRewriteTests(unittest.TestCase):
         self.assertIn("ai_output", result["original bullet"])
         self.assertEqual(result["original bullet"]["ai_output"], result["original bullet"]["moderate"])
 
+    def test_unrenderable_hyphen_glyphs_are_normalized_to_ascii(self):
+        # Real-resume bug: Groq emitted U+2011 non-breaking hyphens, which
+        # render as tofu boxes (□) in the exported DOCX.
+        r, _ = make_rewriter_with_fake_client(responses=json.dumps(
+            [{
+                "moderate": "Led end\u2011to\u2011end development of a web\u2011based platform",
+                "aggressive": "Spearheaded full\u2010cycle delivery",
+            }]
+        ))
+        result = r.rewrite_bullets(["Led end-to-end development"])
+        out = result["Led end-to-end development"]
+        self.assertEqual(out["ai_output"], "Led end-to-end development of a web-based platform")
+        self.assertEqual(out["aggressive"], "Spearheaded full-cycle delivery")
+
     def test_aggressive_falls_back_to_moderate_if_missing(self):
         r, _ = make_rewriter_with_fake_client(responses=json.dumps(
             [{"moderate": "Built the thing"}]

@@ -129,6 +129,11 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   *Fix:* wire them to real endpoints, or remove the controls. Also fix the Groq-incompatible provider message.
   ✅ *Done 2026-10-26: real endpoints added — `PATCH /auth/me` (update full_name) and `POST /auth/change-password` (verifies the current password, min 8 chars, rehashes with passlib). Settings now saves the name and changes the password through them; the fake "Free Plan · 3 analyses/month" / "Upgrade to Pro" / hardcoded "AK" initials are gone (initials derive from the real name). The provider message is now provider-neutral. Covered in `tests/test_auth_service.py`; verified live: PATCH persists, wrong current password → 400, old password rejected after change (401), new password logs in.*
 
+- [x] **A22 (P1): Tofu boxes (□) in exported DOCX bullets** · `export/docx_exporter.py`, `analyzer/ai_rewriter.py`
+  Found 2026-10-28 (real-resume click-through): AI-rewritten bullets stored in the report contain U+2011 non-breaking hyphens from the model; several DOCX viewers render them as `□` (`end‑to‑□nd`, `real‑□me`, `problem‑□olving`). The same pass also split `NestJS` into `Nest JS`.
+  *Fix:* normalize unrenderable dash glyphs (U+2010/U+2011/U+2012/U+2015/U+2212/U+FE58/U+FE63/U+00AD/U+FFFD) to ASCII hyphens at AI-output creation and defensively at every exporter consumption point; add `NestJS` to the canonical tech terms.
+  ✅ *Done 2026-10-28: verified by generating the DOCX from the stored report — before: 6 U+2011 occurrences; after: none, `NestJS` intact, and the parser's " — " separators preserved. Covered by 5 new tests in `tests/test_docx_exporter.py` and `tests/test_ai_rewriter.py`.*
+
 ---
 
 ## B. Scoring Logic
@@ -389,13 +394,13 @@ Counts verified against the item list on 2026-10-23. (F14 is unused; numbering j
 
 | Section | Items | Done |
 |---|---|---|
-| A. Bugs | 21 | 11 |
+| A. Bugs | 22 | 12 |
 | B. Scoring | 11 | 7 |
 | C. AI Rewriter | 13 | 10 |
 | D. Features | 8 | 0 |
 | E. Security & Config | 6 | 4 |
 | F. Hygiene | 17 | 9 |
-| **Total** | **76** | **41** |
+| **Total** | **77** | **42** |
 
 Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrites from Groq, no fallbacks), A13 (a real resume export keeps its tech spellings), E1 (empty `JWT_SECRET` aborts startup), E2 (allowed preflight 200 / foreign origin 400), and E5 (zero SQL-echo lines in the live log). A14's new certifications/languages sections are fixture-tested because the current real resume has neither; A19 is build-verified but still needs a UI click-through to become 🟢. The rest of the C section remains unit-tested only (🟡) until each item is exercised individually.
 
@@ -405,6 +410,7 @@ Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrit
 
 | Date | Item(s) | What changed | Notes |
 |---|---|---|---|
+| 2026-10-28 | A22 | Export click-through found tofu boxes (□) in project bullets: Groq rewrites stored in the report contain U+2011 non-breaking hyphens, which several DOCX viewers cannot render; the same pass also split "NestJS" into "Nest JS". Unrenderable dash glyphs are now normalized to ASCII at AI-output creation (`ai_rewriter`) and defensively at every exporter consumption point (structured bullets, rewrites, raw lines); `NestJS` added to canonical tech terms. En/em dashes (" — " separators) intentionally preserved. Existing stored report now exports clean without re-analyzing. | 142 backend tests pass (5 new: exporter glyph + NestJS tests, rewriter glyph test). Verified by regenerating the DOCX from the stored report: 6 U+2011 occurrences before → 0 after. Counts: A 12 → 42 done. |
 | 2026-10-28 | A15 (follow-up) | Real-resume click-through caught an A15 regression: "Languages: JavaScript…" under TECHNICAL SKILLS was mistaken for a LANGUAGES section header, eating the skills list. Inline headers now require an ALL-CAPS label or a preceding blank line. Also fixed pre-existing issues the click-through exposed: `_clean_company` no longer dashes inside compounds ("486-Hour", "Full-Stack"), restores "\|" glyphs extracted as "I", strips merged left-column labels from meta lines, and merges wrapped company names; `_clean_degree` dedupes "Senior High Senior High School…" and strips merged "College" prefixes; skills drop category labels. The stored resume was re-parsed in place. | 137 backend tests pass (8 new real-pattern tests). Real resume verified: correct section order, clean skills chips, "Synchores Information Technology Solutions \| 486-Hour \| Imus, Cavite", both education entries intact. Counts unchanged (41 done). |
 | 2026-10-28 | A15 | Parser fixes: contact is parsed line-by-field (labeled fields win; email/phone/URL lines are never the name; LinkedIn/GitHub never leak into portfolio; bare handles normalize to full paths); inline section headers ("Skills: …", "Summary: …") are detected with the remainder kept as the body; `_clean_degree` only strips label prefixes followed by a separator; education merges dateless headers with their dated detail line and starts a new entry on a second school; experience attaches a trailing date-only line to the pending title; skills split on commas. Added `tests/test_section_parser.py` (17 tests) and 2 anonymized fixtures — partial F4/F12 progress. | 129 backend tests pass. All six documented failures reproduced before the fix and verified fixed after. Backend restarted with the new parser. Counts: A 11 → 41 done. |
 | 2026-10-26 | A16, A20, A21, F5, F13 | Honesty batch: decimal/unit metrics (`2.5x`, `3.5 hours`, `1.5 million`) now count while version/year exclusions hold; `navigate`/`addToast` are stable `useCallback`s; Settings saves are real (`PATCH /auth/me` + `POST /auth/change-password` with current-password verification), fake plan/upgrade/hardcoded initials removed, provider message made provider-neutral; Analysis page shows N/A and a no-analysis empty state instead of fake fallback scores; Dashboard computes real stats from the API with empty states, and its export/report/re-analyze buttons do what they claim. | 112 backend tests pass (5 new: auth service profile/password + metric cases); `bun run build` (with `tsc`) passes. Verified live on the restarted server: PATCH `/auth/me` persists the name, wrong current password → 400, change-password → 204 with old password rejected (401) and new password logging in. Counts: A 10, F 9 → 40 done. |

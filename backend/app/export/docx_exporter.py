@@ -15,11 +15,25 @@ from app.common.skills import HARD_SKILLS
 
 _CAMEL_BOUNDARY_RE = re.compile(r"[a-z][A-Z]")
 
+# Glyphs that several DOCX viewers cannot render: PDF and AI output can
+# smuggle in Unicode hyphen variants that show up as tofu boxes (□) in the
+# exported resume. They all map to a plain ASCII hyphen. En/em dashes
+# (U+2013/U+2014) are intentionally kept — Arial renders them and the parser
+# uses " — " as its canonical separator.
+_BAD_DASH_RE = re.compile(
+    r"[\u2010\u2011\u2012\u2015\u2212\uFE58\uFE63\u00AD\uFFFD]"
+)
+
+def _normalize_glyphs(text: str) -> str:
+    """Replace unrenderable dash glyphs with ASCII hyphens."""
+    return _BAD_DASH_RE.sub("-", text)
+
 # Brand/contact names that are not in the skills taxonomy but must keep their
 # internal capital (A14 renders them; A13 must not split them).
 _EXTRA_CANONICAL_TERMS = frozenset({
     "LinkedIn",
     "DevOps",
+    "NestJS",
     "OpenAPI",
     "WordPress",
     "SharePoint",
@@ -455,6 +469,9 @@ class DocxExporter:
                 ):
                     text = opt["ai_output"]
 
+            # Fix: unrenderable Unicode hyphens (U+2011 etc.) from PDF/AI text
+            # render as tofu boxes in DOCX viewers — normalize to ASCII.
+            text = _normalize_glyphs(text)
             # FIX: Ensure missing spaces from AI rewrites or PDF gluing are patched
             text = re.sub(r"\b(platform)(using)\b", r"\1 \2", text, flags=re.I)
             text = self._split_unknown_camel_case(text)
@@ -582,7 +599,7 @@ class DocxExporter:
                 and not self.PLACEHOLDER_RE.search(ai_opt["ai_output"])
             ):
                 text = text.replace(orig, ai_opt["ai_output"])
-        return text
+        return _normalize_glyphs(text)
 
     def _split_unknown_camel_case(self, text: str) -> str:
         """Insert spaces in glued CamelCase without corrupting known tech names.
@@ -617,7 +634,7 @@ class DocxExporter:
         )[0]
         out = []
         for ln in cleaned.splitlines():
-            s = ln.strip()
+            s = _normalize_glyphs(ln.strip())
             if not s:
                 continue
             # drop pure left-column labels

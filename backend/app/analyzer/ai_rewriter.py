@@ -16,6 +16,13 @@ logger = logging.getLogger(__name__)
 
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.I | re.M)
 
+# Hyphen-like glyphs some fonts cannot render (tofu boxes in DOCX viewers).
+_BAD_DASH_RE = re.compile(r"[\u2010\u2011\u2012\u2015\u2212\uFE58\uFE63\u00AD\uFFFD]")
+
+def _normalize_glyphs(text: str) -> str:
+    """Replace unrenderable dash glyphs with ASCII hyphens."""
+    return _BAD_DASH_RE.sub("-", text)
+
 
 def _unchanged(bullet: str, source: str, error: str | None = None, status: str = "skipped") -> dict:
     out = {
@@ -325,6 +332,10 @@ class AIRewriter:
 
         moderate = str(item.get("moderate") or "").strip()
         aggressive = str(item.get("aggressive") or "").strip()
+        # Some models emit U+2011 non-breaking hyphens and similar glyphs that
+        # render as tofu boxes (□) in the exported DOCX — normalize to ASCII.
+        moderate = _normalize_glyphs(moderate)
+        aggressive = _normalize_glyphs(aggressive)
         keywords_used = item.get("keywords_used") or []
         if not isinstance(keywords_used, list):
             keywords_used = []
