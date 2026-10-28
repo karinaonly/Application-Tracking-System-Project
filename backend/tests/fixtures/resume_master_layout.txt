@@ -1,0 +1,37 @@
+JUAN DELA CRUZ
+Quezon City, Metro Manila
+juan.delacruz@email.com | +63 917 000 0000
+github.com/juandelacruz
+
+SUMMARY
+Backend developer with internship and capstone experience.
+
+WORK EXPERIENCE
+Internship
+Backend Developer Intern at Synchores Information
+Jun 2023 - Dec 2023
+- Developed internal CRUD APIs with Django REST Framework
+
+Capstone
+Attendance System
+Jan 2023 - May 2023
+- Built a QR-based attendance tracker with 200 daily users
+
+Freelance
+Web Developer at Local Client
+Aug 2022 - Nov 2022
+- Delivered a portfolio website using WordPress
+
+EDUCATION
+College
+B.S. Computer Science
+University of the Philippines
+2020 - 2024
+
+Senior High School
+ABM Strand
+Sto. Nino National High School
+2016 - 2019
+
+SKILLS
+Python, Django, JavaScript, MySQL, Git

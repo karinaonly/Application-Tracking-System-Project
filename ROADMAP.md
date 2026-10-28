@@ -89,7 +89,7 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   *Fix:* give each contact channel its own slot, and add certifications/languages sections when the parsed resume has them.
   ✅ *Done 2026-10-26: LinkedIn and GitHub are now independent header slots, and `CERTIFICATIONS` / `LANGUAGES` render from `sections["certifications"]["raw"]` and `sections["languages"]["raw"]`. Covered by `tests/test_docx_exporter.py`. Your current resume only has GitHub and has no certifications/languages sections, so the new sections are fixture-tested until a real resume contains them.*
 
-- [ ] **A15 (P0): Section parser mis-reads common resume layouts** · `parser/section_parser.py`
+- [x] **A15 (P0): Section parser mis-reads common resume layouts** · `parser/section_parser.py`
   Found 2026-10-23, verified against real inputs:
   - `"University of the Philippines"` → `"of the Philippines"`
   - A contact location can swallow the name and the following newline.
@@ -98,6 +98,7 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   - An inline `"Skills: Python, JavaScript, React"` header is not detected.
   - A single-line contact containing an email becomes the whole line as `name`.
   *Fix:* anchor school extraction on the degree line, parse contact lines field-by-field, detect inline section headers, and never treat a line containing an email/phone as a name. Add fixtures (ties to F4/F12).
+  ✅ *Done 2026-10-28: all six reproduced and fixed. Contact is now parsed line-by-line with per-field rules (labeled fields win; a name line may never contain an email/phone/URL; LinkedIn/GitHub never leak into portfolio; bare usernames normalize to full paths). Inline headers ("Skills: …", "Summary: …") start a section and feed the remainder to the body. `_clean_degree` only strips a label prefix when followed by a separator, so "University of the Philippines" survives. Education now merges a dateless school/degree header with its dated detail line, attaches bare date lines to the pending header, and starts a new entry on a second school. Experience attaches a trailing date-only line to the pending title instead of splitting into two entries. `_parse_skills` splits comma lists. Covered by `tests/test_section_parser.py` (17 tests) with two anonymized fixtures (`resume_classic.txt`, `resume_master_layout.txt`) — partial progress on F4/F12.*
 
 - [x] **A16 (P1): Decimal and unit-scaled metrics are not counted** · `analyzer/bullet_analyzer.py`
   Found 2026-10-23 (extends A9/A11): `"Cut latency by 2.5x"`, `"Reduced build time to 3.5 hours"`, `"Served 1.5 million users"` all return no metric.
@@ -319,7 +320,8 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   Setup steps, `.env` example, how to run backend and frontend.
 
 - [ ] **F4 (P1): No tests**
-  Start with parser tests using 5 to 10 anonymized sample resumes as fixtures, then analyzer unit tests.
+  Start with parser tests using 5 to 10 anonymized sample resumes as fixture
+  🟡 *Partial 2026-10-28: parser structure tests exist (`tests/test_section_parser.py`) with 2 anonymized fixtures (`resume_classic.txt`, `resume_master_layout.txt`); 3–8 more layouts still needed.*s, then analyzer unit tests.
   🟡 *Updated 2026-10-08: `backend/tests/` now has 79 tests (bullets, keywords, scoring, ats_checker, claim guard, ai_rewriter). Parser tests still missing.*
 
 - [x] **F5 (P1): Fake fallback scores in the UI** · `frontend/src/pages/Analysis.tsx`
@@ -387,13 +389,13 @@ Counts verified against the item list on 2026-10-23. (F14 is unused; numbering j
 
 | Section | Items | Done |
 |---|---|---|
-| A. Bugs | 21 | 10 |
+| A. Bugs | 21 | 11 |
 | B. Scoring | 11 | 7 |
 | C. AI Rewriter | 13 | 10 |
 | D. Features | 8 | 0 |
 | E. Security & Config | 6 | 4 |
 | F. Hygiene | 17 | 9 |
-| **Total** | **76** | **40** |
+| **Total** | **76** | **41** |
 
 Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrites from Groq, no fallbacks), A13 (a real resume export keeps its tech spellings), E1 (empty `JWT_SECRET` aborts startup), E2 (allowed preflight 200 / foreign origin 400), and E5 (zero SQL-echo lines in the live log). A14's new certifications/languages sections are fixture-tested because the current real resume has neither; A19 is build-verified but still needs a UI click-through to become 🟢. The rest of the C section remains unit-tested only (🟡) until each item is exercised individually.
 
@@ -403,6 +405,7 @@ Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrit
 
 | Date | Item(s) | What changed | Notes |
 |---|---|---|---|
+| 2026-10-28 | A15 | Parser fixes: contact is parsed line-by-field (labeled fields win; email/phone/URL lines are never the name; LinkedIn/GitHub never leak into portfolio; bare handles normalize to full paths); inline section headers ("Skills: …", "Summary: …") are detected with the remainder kept as the body; `_clean_degree` only strips label prefixes followed by a separator; education merges dateless headers with their dated detail line and starts a new entry on a second school; experience attaches a trailing date-only line to the pending title; skills split on commas. Added `tests/test_section_parser.py` (17 tests) and 2 anonymized fixtures — partial F4/F12 progress. | 129 backend tests pass. All six documented failures reproduced before the fix and verified fixed after. Backend restarted with the new parser. Counts: A 11 → 41 done. |
 | 2026-10-26 | A16, A20, A21, F5, F13 | Honesty batch: decimal/unit metrics (`2.5x`, `3.5 hours`, `1.5 million`) now count while version/year exclusions hold; `navigate`/`addToast` are stable `useCallback`s; Settings saves are real (`PATCH /auth/me` + `POST /auth/change-password` with current-password verification), fake plan/upgrade/hardcoded initials removed, provider message made provider-neutral; Analysis page shows N/A and a no-analysis empty state instead of fake fallback scores; Dashboard computes real stats from the API with empty states, and its export/report/re-analyze buttons do what they claim. | 112 backend tests pass (5 new: auth service profile/password + metric cases); `bun run build` (with `tsc`) passes. Verified live on the restarted server: PATCH `/auth/me` persists the name, wrong current password → 400, change-password → 204 with old password rejected (401) and new password logging in. Counts: A 10, F 9 → 40 done. |
 | 2026-10-26 | A17, E1, E2, E5, E6, F9, F11, F16, F17, F18 | Analyze now 404s on missing/foreign `job_id`; JWT secret is required at startup (no insecure default); CORS is an explicit origin allowlist; SQL echo is off by default; the job-URL fetch has an SSRF guard (scheme/credentials/public-IP checks, redirects re-checked, 400 on violation). Frontend `build` runs `tsc` first, `.vscode` paths use `${workspaceFolder}`, the default DB path is anchored to `backend/`, the stray root DB and `setup_project_latest.py` are deleted, and `backend/.env.example` was added. | 107 tests pass; `bun run build` (with `tsc`) passes. Verified live on the restarted server: empty `JWT_SECRET` → startup abort; allowed preflight → 200 with ACAO, `http://evil.example` → 400; zero SQL-echo lines across DB-touching requests. Counts: A 7, E 4, F 7 → 35 done. |
 | 2026-10-26 | A13, A14, A19 | Exporter now protects canonical tech spellings when splitting glued CamelCase, renders LinkedIn and GitHub as independent header slots, and writes `CERTIFICATIONS` / `LANGUAGES` sections when parsed. Upload page now sends the selected job id to `analyze`. Added 6 exporter regression tests. | 95 backend tests pass; `tsc --noEmit` is clean (fixed the stale `r.type` reference) and the Vite build passes. A13 confirmed with a real resume export; A14's certification/language path is fixture-tested only because the current resume has neither; A19 needs a UI click-through to be 🟢. |

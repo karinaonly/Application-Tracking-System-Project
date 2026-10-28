@@ -32,6 +32,37 @@ class SectionParser:
         r"^(?P<title>.+?)\s+\bat\b\s+(?P<company>.+)$",
         re.I,
     )
+    # A15: per-field contact patterns. Lines are parsed field-by-field, so a
+    # line that contains an email/phone/URL is never treated as the name.
+    EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
+    PHONE_RE = re.compile(
+        r"(?<![\w.])(?:\+?\d{1,3}[\s\-]?)?(?:\(?\d{2,4}\)?[\s\-]?)\d{3,4}[\s\-]?\d{3,4}(?![\w.])"
+    )
+    LINKEDIN_URL_RE = re.compile(
+        r"(?:https?://)?(?:www\.)?linkedin\.com/in/[a-zA-Z0-9\-_]+", re.I
+    )
+    GITHUB_URL_RE = re.compile(
+        r"(?:https?://)?(?:www\.)?github\.com/[a-zA-Z0-9\-]+", re.I
+    )
+    GENERIC_URL_RE = re.compile(
+        r"(?:https?://[^\s,;]+|www\.[^\s,;]+|"
+        r"(?<!@)\b[\w\-]+\.(?:com|dev|io|net|org|app|me|ai|co|ph)(?:/[^\s,;]*)?)",
+        re.I,
+    )
+    LABELED_FIELD_RE = re.compile(
+        r"^(?P<key>linkedin|github|portfolio|website|email|phone|mobile|tel|location|address)\s*[:\-–—]\s*(?P<value>.+)$",
+        re.I,
+    )
+    # A whole short line that looks like "City, Province" (optionally + postal code)
+    LOCATION_LINE_RE = re.compile(
+        r"^[A-Z][A-Za-z.\s'\-]*,\s*[A-Z][A-Za-z.\s'\-]*?(?:\s+\d{4,6})?$"
+    )
+    ROLE_LINE_RE = re.compile(r"(developer|engineer|student|intern)", re.I)
+
+    # A15: inline section headers like "Skills: Python, JavaScript, React"
+    INLINE_HEADER_RE = re.compile(
+        r"^(?P<label>[A-Za-z][A-Za-z\s/&]*?)\s*[:\u2013\u2014]\s*(?P<rest>\S.*)$"
+    )
 
     def parse(self, raw_text: str) -> dict:
         lines = raw_text.splitlines()
@@ -48,6 +79,16 @@ class SectionParser:
                 continue
 
             detected = self._detect_sec(line_str)
+            inline_rest = ""
+            if not detected:
+                # A15: "Skills: Python, React" — the label is the header, the
+                # remainder is the section's first body line.
+                m = self.INLINE_HEADER_RE.match(line_str)
+                if m:
+                    cand = self._detect_sec(m.group("label").strip())
+                    if cand and cand != "contact":
+                        detected = cand
+                        inline_rest = m.group("rest").strip()
 
             # Skip REFERENCES entirely (ATS best practice)
             if detected == "references":
@@ -63,7 +104,7 @@ class SectionParser:
                     raw = re.split(r"(?i)\n?\s*REFERENCES?\b.*", raw, maxsplit=1)[0].strip()
                     sections[current_sec] = {"raw": raw}
                 current_sec = detected
-                current_body = []
+                current_body = [inline_rest] if inline_rest else []
                 sec_order.append(detected)
             else:
                 if current_sec:
@@ -133,7 +174,7 @@ class SectionParser:
         if not m:
             return "", line.strip(" |-–—")
         dates = m.group("dates").strip()
-        rest = (line[: m.start()] + line[m.end() :]).strip(" |-–—")
+        rest = (line[: m.start()] + line[m.end() :]).strip(" |-–—,")
         return dates, rest
 
     def _split_role_at_company(self, text: str) -> tuple[str, str]:
@@ -162,11 +203,21 @@ class SectionParser:
         return text.strip(" |—–- \t")
 
     def _clean_degree(self, text: str) -> str:
-        """Fix 'School, ABM Strand' and leading label leftovers."""
+        """Strip a leading left-column label — but only when it is followed by
+        a separator (A15: 'University of the Philippines' must survive)."""
         if not text:
             return ""
         text = re.sub(
-            r"^(?:College|Senior\s*High(?:\s*School)?|University|Institute|School)\s*,?\s*",
+            r"^(?:College|Senior\s*High(?:\s*School)?|University|Institute|School)\b"
+            r"(?:\s*[,:\u2013\u2014\u00b7-]\s*|\s*$)",
+            "",
+            text,
+            flags=re.I,
+            count=1,
+        ).strip()
+        # Label-only lines collapse to ""
+        text = re.sub(
+            r"^(?:College|Senior\s*High(?:\s*School)?|University|Institute|School)$",
             "",
             text,
             flags=re.I,
@@ -178,6 +229,20 @@ class SectionParser:
     # ─────────────────────────────────────────────
     # CONTACT
     # ─────────────────────────────────────────────
+    def _normalize_handle(self, kind: str, value: str) -> str:
+        """Turn a labeled value into a canonical URL form."""
+        value = value.strip().rstrip(".,;")
+        if kind == "linkedin":
+            if self.LINKEDIN_URL_RE.search(value):
+                return self.LINKEDIN_URL_RE.search(value).group(0).rstrip("/")
+            # bare username -> linkedin.com/in/<user>
+            return f"linkedin.com/in/{value.strip('/')}"
+        if kind == "github":
+            if self.GITHUB_URL_RE.search(value):
+                return self.GITHUB_URL_RE.search(value).group(0).rstrip("/")
+            return f"github.com/{value.strip('/')}"
+        return value
+
     def _parse_contact(self, text: str) -> dict:
         contact = {
             "name": "",
@@ -188,52 +253,89 @@ class SectionParser:
             "portfolio": "",
             "location": "",
         }
-        lines = [l.strip() for l in text.splitlines() if l.strip()]
-        if lines:
-            for line in lines[:3]:
-                if "@" not in line and not re.search(r"\d{3,}", line) and len(line) < 60:
-                    # skip if it looks like a role line
-                    if not re.search(r"(developer|engineer|student|intern)", line, re.I):
-                        contact["name"] = line
-                        break
-            if not contact["name"] and lines:
-                contact["name"] = lines[0]
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line:
+                continue
 
-        email = re.search(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}", text)
-        if email:
-            contact["email"] = email.group()
+            # A15: labeled lines win outright ("LinkedIn: linkedin.com/in/jane")
+            labeled = self.LABELED_FIELD_RE.match(line)
+            if labeled:
+                key = labeled.group("key").lower()
+                value = labeled.group("value").strip()
+                if key == "linkedin":
+                    contact["linkedin"] = self._normalize_handle("linkedin", value)
+                elif key == "github":
+                    contact["github"] = self._normalize_handle("github", value)
+                elif key in ("portfolio", "website"):
+                    m = self.GENERIC_URL_RE.search(value)
+                    if m and "@" not in m.group(0):
+                        contact["portfolio"] = m.group(0).rstrip(".,);")
+                elif key == "email":
+                    m = self.EMAIL_RE.search(value)
+                    if m:
+                        contact["email"] = m.group(0)
+                elif key in ("phone", "mobile", "tel"):
+                    contact["phone"] = value
+                else:  # location / address
+                    contact["location"] = value
+                continue
 
-        phone = re.search(
-            r"(?:\+?\d{1,3}[\s\-]?)?(?:\(?\d{2,4}\)?[\s\-]?)?\d{3,4}[\s\-]?\d{3,4}",
-            text,
-        )
-        if phone:
-            contact["phone"] = phone.group().strip()
+            has_url = False
+            li = self.LINKEDIN_URL_RE.search(line)
+            if li and not contact["linkedin"]:
+                contact["linkedin"] = li.group(0).rstrip("/")
+                has_url = True
+            gh = self.GITHUB_URL_RE.search(line)
+            if gh and not contact["github"]:
+                contact["github"] = gh.group(0).rstrip("/")
+                has_url = True
 
-        li = re.search(
-            r"(?:linkedin\.com/in/|linkedin:\s*)([a-zA-Z0-9\-_/]+)", text, re.I
-        )
-        if li:
-            contact["linkedin"] = li.group(0).replace("linkedin:", "").strip()
+            # A15: a portfolio is any URL that is NOT linkedin/github
+            if not contact["portfolio"]:
+                for m in self.GENERIC_URL_RE.finditer(line):
+                    token = m.group(0)
+                    if "@" in token:
+                        continue
+                    if self.LINKEDIN_URL_RE.search(token) or self.GITHUB_URL_RE.search(token):
+                        continue
+                    contact["portfolio"] = token.rstrip(".,);")
+                    has_url = True
+                    break
 
-        gh = re.search(r"(?:github\.com/|github:\s*)([a-zA-Z0-9\-]+)", text, re.I)
-        if gh:
-            contact["github"] = gh.group(0).replace("github:", "").strip()
+            if not contact["email"] and "@" in line:
+                m = self.EMAIL_RE.search(line)
+                if m:
+                    contact["email"] = m.group(0)
+                    has_url = True
 
-        port = re.search(
-            r"(https?://[^\s]+|(?:[\w\-]+\.)?(?:vercel\.app|netlify\.app|github\.io)/[^\s]*)",
-            text,
-            re.I,
-        )
-        if port:
-            contact["portfolio"] = port.group(1).rstrip(".,);")
+            if not contact["phone"] and self.PHONE_RE.search(line):
+                contact["phone"] = self.PHONE_RE.search(line).group().strip()
 
-        loc = re.search(
-            r"([A-Z][a-zA-Z\s]+(?:City)?,\s*[A-Z][a-zA-Z]+(?:\s+[A-Z]{2})?)",
-            text,
-        )
-        if loc:
-            contact["location"] = loc.group(1).strip()
+            looks_location = (
+                "@" not in line
+                and not has_url
+                and len(line) < 60
+                and len(line.split()) <= 6
+                and self.LOCATION_LINE_RE.match(line)
+                and not self.ACTION_RE.match(line)
+            )
+            if looks_location and not contact["location"]:
+                contact["location"] = line
+
+            # A15: a name line must not contain an email, phone, or URL
+            is_name_candidate = (
+                not contact["name"]
+                and "@" not in line
+                and not has_url
+                and not self.PHONE_RE.search(line)
+                and not looks_location
+                and not self.ROLE_LINE_RE.search(line)
+                and not re.search(r"\d{3,}", line)
+                and len(line) < 60
+            )
+            if is_name_candidate:
+                contact["name"] = line
 
         return contact
 
@@ -313,6 +415,16 @@ class SectionParser:
 
             # --- pure date line (left column) ---
             if self._is_date_only(line):
+                # A15: "Title at Company" followed by its date line is one
+                # entry — attach the date instead of flushing the title away.
+                if (
+                    current
+                    and not current["dates"]
+                    and not current["bullets"]
+                    and (current["title"] or current["company"])
+                ):
+                    current["dates"] = line.strip()
+                    continue
                 flush()
                 current = {
                     "title": "",
@@ -635,6 +747,16 @@ class SectionParser:
                 continue
 
             if self._is_date_only(line):
+                # A15: a bare date line after header lines belongs to them
+                # (degree-first layout) instead of starting a new entry.
+                if (
+                    current
+                    and not current["dates"]
+                    and not current["details"]
+                    and (current["school"] or current["degree"])
+                ):
+                    current["dates"] = line.strip()
+                    continue
                 flush()
                 current = {
                     "dates": line.strip(),
@@ -648,13 +770,40 @@ class SectionParser:
             rest = rest.strip()
 
             if dates_in_line and len(line) < 120:
-                flush()
+                # A15: a dateless school/degree header followed by the dated
+                # detail line is ONE entry — carry the header into the new
+                # entry instead of splitting them apart.
+                carried = ""
+                carried_field = ""
+                drop_prev = False
+                if (
+                    current
+                    and not current["dates"]
+                    and not current["details"]
+                    and bool(current["school"]) != bool(current["degree"])
+                ):
+                    if current["school"]:
+                        carried, carried_field = current["school"], "school"
+                    else:
+                        carried, carried_field = current["degree"], "degree"
+                    drop_prev = True
+
+                if drop_prev:
+                    current = None  # discard the header-only entry
+                else:
+                    flush()
+
                 current = {
                     "dates": dates_in_line,
                     "school": "",
                     "degree": "",
                     "details": [],
                 }
+                if carried:
+                    if carried_field == "school" and not current["school"]:
+                        current["school"] = carried
+                    elif carried_field == "degree" and not current["degree"]:
+                        current["degree"] = carried
                 if rest:
                     if school_hint.search(rest) and not degree_hint.search(rest):
                         current["school"] = rest
@@ -665,6 +814,16 @@ class SectionParser:
                 continue
 
             if current is None:
+                current = {
+                    "dates": "",
+                    "school": "",
+                    "degree": "",
+                    "details": [],
+                }
+
+            # A15: a second school line means a new entry, not leftover details
+            if school_hint.search(line) and current["school"] and current["degree"]:
+                flush()
                 current = {
                     "dates": "",
                     "school": "",
@@ -701,7 +860,8 @@ class SectionParser:
         if not text:
             return []
         text = re.sub(r"[•▪▸►◆○●]", ",", text)
-        parts = re.split(r"[\n;/|]", text)
+        # A15: comma-separated skill lists are the most common format
+        parts = re.split(r"[\n;/|,]", text)
         skills = []
         for p in parts:
             c = p.strip().strip("-").strip("*").strip()
