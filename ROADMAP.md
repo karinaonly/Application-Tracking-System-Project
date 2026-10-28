@@ -255,11 +255,11 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
 
 ## D. Missing Features (compared with FixResume)
 
-- [ ] **D1 (P0): Before/after re-scoring**
+- [x] **D1 (P0): Before/after re-scoring**
   Analyze the tailored version and show the improvement (their headline "35% → 83%" feature).
   ✅ *Done 2026-10-28: after the AI rewrites, `analyze()` re-runs the bullet analyzer and (when a job was scored) the keyword engine on the tailored text — same bullet population as the before-pass, with only applied rewrites substituted (raw-text replacement tolerates PDF line wraps). The report stores an `improvement` block (`before`/`after` overall + bullet/keyword scores, `applied_rewrites`/`flagged_bullets`); it is omitted when no rewrite changed a bullet. ATS compatibility carries over unchanged (format-based — rewrites don't touch it, and the claim guard forbids invented metrics, so the after number is never faked). The Analysis page shows a "Projected After Tailoring" panel: strikethrough before score → after score with a delta chip and per-component deltas. Covered by 3 tests in `tests/test_resume_service.py`.*
 
-- [ ] **D2 (P1): Real JD parser** · `jobs/models.py`, `jobs/router.py`
+- [x] **D2 (P1): Real JD parser** · `jobs/models.py`, `jobs/router.py`
   `extracted_keywords` exists but is never filled.
   *Fix:* extract required skills, preferred skills, tools, and seniority once on save, then store them.
   ✅ *Done 2026-10-28: new deterministic `jobs/parser.py` (no AI) runs on both save paths (`POST /jobs/` and `/from-url`) and stores `extracted_keywords`: `required_skills` / `preferred_skills` / `other_skills` (bucketed by section headers — Requirements, Nice to have, Benefits resets — with anchored short-header detection so content lines like "…is a plus" never switch sections, and inline `Requirements: …` colons feed their remainder), `tools` (curated tool/cloud/DB subset of the taxonomy), `seniority` (title first, body fallback limited to intern/junior/mid/senior so a JD merely *mentioning* a manager isn't misread), and `min_years_experience`. Uses the same taxonomy as the keyword engine, so these are exactly the terms the keyword score can match. `JobResponse` now returns the block; all 25 existing jobs were backfilled in place; the Jobs page shows a seniority badge and required-skill chips on saved cards. Future: keyword scoring can weight required > preferred. Covered by 9 tests in `tests/test_job_parser.py`.*
@@ -318,8 +318,9 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
 
 ## F. Engineering Hygiene
 
-- [ ] **F1 (P0): No `requirements.txt`**
+- [x] **F1 (P0): No `requirements.txt`**
   Dependencies are undocumented: fastapi, sqlmodel, pydantic-settings, python-jose, passlib[bcrypt], pdfplumber, PyMuPDF, python-docx, spacy, scikit-learn, pyspellchecker, openai, httpx, beautifulsoup4, email-validator, python-multipart.
+  ✅ *Done 2026-10-28 (with F3): `backend/requirements.txt` created with the direct dependencies pinned to the versions in the working venv (18 direct deps; spaCy + scikit-learn marked optional with the graceful-degradation note), plus the spaCy model install command documented in the README.*
 
 - [x] **F2 (P0): spaCy model fails silently** · `analyzer/keyword_engine.py`
   If `en_core_web_sm` is missing, `nlp = None` and noun chunks are silently skipped.
