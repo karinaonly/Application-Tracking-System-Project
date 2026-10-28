@@ -128,7 +128,7 @@ export default function Dashboard({ navigate, addToast }: PageProps) {
   const exportResume = async (f: RecentFile) => {
     addToast("info", `Generating DOCX for ${f.name}…`)
     try {
-      const blob = await api.exportResume(f.id)
+      const blob = await api.exportResume(f.id, f.analysis?.id)
       const link = document.createElement("a")
       link.href = URL.createObjectURL(blob)
       link.download = `${f.name.replace(/\.[^.]+$/, "")}_ATS_Optimized.docx`

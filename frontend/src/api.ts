@@ -172,11 +172,13 @@ export async function analyzeResume(resumeId: string, jobId?: string): Promise<R
   return request<ResumeAnalysis>(`/resumes/${resumeId}/analyze${query}`, { method: "POST" })
 }
 
-export async function exportResume(resumeId: string): Promise<Blob> {
+export async function exportResume(resumeId: string, analysisId?: string): Promise<Blob> {
   const headers = new Headers()
   const token = getToken()
   if (token) headers.set("Authorization", `Bearer ${token}`)
-  const response = await fetch(`${API_BASE_URL}/resumes/${resumeId}/export`, { headers })
+  // A18: export the analysis being viewed, not "the latest" server-side.
+  const query = analysisId ? `?analysis_id=${encodeURIComponent(analysisId)}` : ""
+  const response = await fetch(`${API_BASE_URL}/resumes/${resumeId}/export${query}`, { headers })
   if (!response.ok) throw new Error("Could not export resume")
   return response.blob()
 }

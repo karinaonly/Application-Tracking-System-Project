@@ -14,7 +14,7 @@ from app.analyzer.grammar_checker import GrammarChecker
 from app.analyzer.ai_rewriter import AIRewriter
 from app.analyzer.scoring import compute_overall
 from app.export.docx_exporter import DocxExporter
-from app.common.exceptions import JobNotFoundError, ResumeNotFoundError
+from app.common.exceptions import AnalysisNotFoundError, JobNotFoundError, ResumeNotFoundError
 
 # How many flagged bullets we'll attempt to send for AI rewriting per analysis.
 # AIRewriter.MAX_BULLETS_PER_CALL caps what actually goes in the API request;
@@ -141,14 +141,26 @@ class ResumeService:
         self.session.refresh(analysis)
         return analysis
 
-    def export_docx(self, resume_id: UUID, user_id: UUID) -> bytes:
+    def export_docx(
+        self,
+        resume_id: UUID,
+        user_id: UUID,
+        analysis_id: UUID | None = None,
+    ) -> bytes:
         resume = self.session.get(Resume, resume_id)
         if not resume or resume.user_id != user_id:
             raise ResumeNotFoundError()
 
-        # Fetch latest analysis for this resume to get keywords & rewrites
-        statement = select(ResumeAnalysis).where(ResumeAnalysis.resume_id == resume_id).order_by(ResumeAnalysis.created_at.desc())
-        analysis = self.session.exec(statement).first()
+        # A18: export the analysis the user is viewing, not blindly "the
+        # latest" — viewing analysis A and exporting could otherwise produce
+        # analysis B's keywords/rewrites.
+        if analysis_id:
+            analysis = self.session.get(ResumeAnalysis, analysis_id)
+            if not analysis or analysis.resume_id != resume_id:
+                raise AnalysisNotFoundError()
+        else:
+            statement = select(ResumeAnalysis).where(ResumeAnalysis.resume_id == resume_id).order_by(ResumeAnalysis.created_at.desc())
+            analysis = self.session.exec(statement).first()
 
         missing_keywords = []
         rewritten_bullets = {}

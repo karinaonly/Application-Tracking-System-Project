@@ -57,11 +57,12 @@ def analyze_resume(
 @router.get("/{resume_id}/export")
 def export_resume(
     resume_id: UUID,
+    analysis_id: UUID | None = None,
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
     service = ResumeService(session)
-    data = service.export_docx(resume_id, user.id)
+    data = service.export_docx(resume_id, user.id, analysis_id)
     return Response(
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",

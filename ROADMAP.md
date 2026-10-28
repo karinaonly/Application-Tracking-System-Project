@@ -110,14 +110,15 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   *Fix:* verify `job.user_id == current_user.id` before use, and return 404 otherwise. (Depends on the E3 decision — moot if auth is removed.)
   ✅ *Done 2026-10-26: `service.analyze` now raises the existing `JobNotFoundError` (404) when the job is missing or owned by someone else, instead of silently analyzing without keywords. Covered in `tests/test_resume_service.py`.*
 
-- [ ] **A18 (P1): Export uses the latest analysis, not the selected one** · `resume/service.py`, `frontend/src/pages/Upload.tsx`
+- [x] **A18 (P1): Export uses the latest analysis, not the selected one** · `resume/service.py`, `frontend/src/pages/Upload.tsx`
   Found 2026-10-23: viewing analysis A and exporting can produce analysis B, because export resolves "most recent" server-side.
   *Fix:* accept an `analysis_id` on export, or export from a stored per-job version (ties to D3).
+  ✅ *Done 2026-10-28: `GET /resumes/{id}/export` now accepts `analysis_id`; the service verifies the analysis belongs to that resume (`AnalysisNotFoundError` otherwise) and uses its keywords/rewrites/target role. Without the param it falls back to the latest (Upload-page exports keep that honest default). The frontend pins the export to the viewed analysis everywhere one is in view: Analysis page passes the open analysis's id, Dashboard passes the row's displayed `latest_analysis.id`. Covered by 3 new tests in `tests/test_resume_service.py`.*
 
 - [x] **A19 (P1): Upload page highlights a job but submits none** · `frontend/src/pages/Upload.tsx`
   Found 2026-10-23: the selected job card is visual only — `analyze` is called without `job_id`, so the highlighted job is not the one used.
   *Fix:* send the selected job id, and preselect it when arriving from a job (ties to D6).
-  ✅ *Done 2026-10-26: `activeJobId` (the selected job, falling back to the first job) is sent to `analyzeResume`, used for the saved resume metadata, and drives the highlighted/checked job card. Also fixed the stale `ResumeSummary.file_type` reference that made `tsc` fail. `tsc --noEmit` and `bun run build` pass; a UI click-through is still needed to mark this 🟢.*
+  ✅ *Done 2026-10-26: `activeJobId` (the selected job, falling back to the first job) is sent to `analyzeResume`, used for the saved resume metadata, and drives the highlighted/checked job card. Also fixed the stale `ResumeSummary.file_type` reference that made `tsc` fail. `tsc --noEmit` and `bun run build` pass. 🟢 Verified live 2026-10-28: the user's upload → analyze (with selected job) → export click-through produced a correct DOCX.*
 
 - [x] **A20 (P2): `addToast` is recreated every render** · `frontend/src/App.tsx`
   Found 2026-10-23: it is passed into effect dependency arrays, so effects can re-run and re-fetch or re-toast.
@@ -394,13 +395,13 @@ Counts verified against the item list on 2026-10-23. (F14 is unused; numbering j
 
 | Section | Items | Done |
 |---|---|---|
-| A. Bugs | 22 | 12 |
+| A. Bugs | 22 | 13 |
 | B. Scoring | 11 | 7 |
 | C. AI Rewriter | 13 | 10 |
 | D. Features | 8 | 0 |
 | E. Security & Config | 6 | 4 |
 | F. Hygiene | 17 | 9 |
-| **Total** | **77** | **42** |
+| **Total** | **77** | **43** |
 
 Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrites from Groq, no fallbacks), A13 (a real resume export keeps its tech spellings), E1 (empty `JWT_SECRET` aborts startup), E2 (allowed preflight 200 / foreign origin 400), and E5 (zero SQL-echo lines in the live log). A14's new certifications/languages sections are fixture-tested because the current real resume has neither; A19 is build-verified but still needs a UI click-through to become 🟢. The rest of the C section remains unit-tested only (🟡) until each item is exercised individually.
 
@@ -410,6 +411,7 @@ Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrit
 
 | Date | Item(s) | What changed | Notes |
 |---|---|---|---|
+| 2026-10-28 | A18 (also marks A19 🟢) | Export now uses the analysis the user is viewing instead of blindly "the latest": `GET /resumes/{id}/export` accepts `analysis_id` (validated to belong to that resume, `AnalysisNotFoundError` otherwise) and the frontend pins it everywhere an analysis is in view — Analysis page and Dashboard both pass the displayed analysis's id; Upload-page exports keep the latest-analysis default since no analysis is in view there. A19's upload → analyze (selected job) → export click-through was confirmed live by the user, closing the last undone bug in section A. | 145 backend tests pass (3 new export-selection tests); `tsc --noEmit` + `bun run build` pass. Counts: A 13 → 43 done. |
 | 2026-10-28 | A22 | Export click-through found tofu boxes (□) in project bullets: Groq rewrites stored in the report contain U+2011 non-breaking hyphens, which several DOCX viewers cannot render; the same pass also split "NestJS" into "Nest JS". Unrenderable dash glyphs are now normalized to ASCII at AI-output creation (`ai_rewriter`) and defensively at every exporter consumption point (structured bullets, rewrites, raw lines); `NestJS` added to canonical tech terms. En/em dashes (" — " separators) intentionally preserved. Existing stored report now exports clean without re-analyzing. | 142 backend tests pass (5 new: exporter glyph + NestJS tests, rewriter glyph test). Verified by regenerating the DOCX from the stored report: 6 U+2011 occurrences before → 0 after. Counts: A 12 → 42 done. |
 | 2026-10-28 | A15 (follow-up) | Real-resume click-through caught an A15 regression: "Languages: JavaScript…" under TECHNICAL SKILLS was mistaken for a LANGUAGES section header, eating the skills list. Inline headers now require an ALL-CAPS label or a preceding blank line. Also fixed pre-existing issues the click-through exposed: `_clean_company` no longer dashes inside compounds ("486-Hour", "Full-Stack"), restores "\|" glyphs extracted as "I", strips merged left-column labels from meta lines, and merges wrapped company names; `_clean_degree` dedupes "Senior High Senior High School…" and strips merged "College" prefixes; skills drop category labels. The stored resume was re-parsed in place. | 137 backend tests pass (8 new real-pattern tests). Real resume verified: correct section order, clean skills chips, "Synchores Information Technology Solutions \| 486-Hour \| Imus, Cavite", both education entries intact. Counts unchanged (41 done). |
 | 2026-10-28 | A15 | Parser fixes: contact is parsed line-by-field (labeled fields win; email/phone/URL lines are never the name; LinkedIn/GitHub never leak into portfolio; bare handles normalize to full paths); inline section headers ("Skills: …", "Summary: …") are detected with the remainder kept as the body; `_clean_degree` only strips label prefixes followed by a separator; education merges dateless headers with their dated detail line and starts a new entry on a second school; experience attaches a trailing date-only line to the pending title; skills split on commas. Added `tests/test_section_parser.py` (17 tests) and 2 anonymized fixtures — partial F4/F12 progress. | 129 backend tests pass. All six documented failures reproduced before the fix and verified fixed after. Backend restarted with the new parser. Counts: A 11 → 41 done. |

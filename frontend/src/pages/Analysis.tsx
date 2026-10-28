@@ -221,7 +221,8 @@ export default function Analysis({ navigate, addToast }: PageProps) {
     setExportLoading(true)
     addToast("info", "Generating ATS-optimized DOCX…")
     try {
-      const blob = await api.exportResume(resumeId)
+      // A18: pin the export to the analysis being viewed on this page.
+      const blob = await api.exportResume(resumeId, analysis?.id)
       const link = document.createElement("a")
       link.href = URL.createObjectURL(blob)
       link.download = "ATS_Optimized_Resume.docx"
