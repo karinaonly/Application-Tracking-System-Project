@@ -70,23 +70,29 @@ class SectionParser:
         current_sec = None
         current_body: list[str] = []
         sec_order: list[str] = []
+        prev_blank = True
 
         for line in lines:
             line_str = line.strip()
             if not line_str:
                 if current_sec:
                     current_body.append("")
+                prev_blank = True
                 continue
 
             detected = self._detect_sec(line_str)
             inline_rest = ""
             if not detected:
                 # A15: "Skills: Python, React" — the label is the header, the
-                # remainder is the section's first body line.
+                # remainder is the section's first body line. Only trust it
+                # when it looks like a header, not like a labeled content line
+                # inside a section (e.g. "Languages: JavaScript" under SKILLS):
+                # the label must be ALL-CAPS, or the line must start a block.
                 m = self.INLINE_HEADER_RE.match(line_str)
                 if m:
-                    cand = self._detect_sec(m.group("label").strip())
-                    if cand and cand != "contact":
+                    label = m.group("label").strip()
+                    cand = self._detect_sec(label)
+                    if cand and cand != "contact" and (label.isupper() or prev_blank):
                         detected = cand
                         inline_rest = m.group("rest").strip()
 
@@ -96,6 +102,7 @@ class SectionParser:
                     sections[current_sec] = {"raw": "\n".join(current_body).strip()}
                 current_sec = None
                 current_body = []
+                prev_blank = False
                 continue
 
             if detected:
@@ -106,6 +113,7 @@ class SectionParser:
                 current_sec = detected
                 current_body = [inline_rest] if inline_rest else []
                 sec_order.append(detected)
+                prev_blank = False
             else:
                 if current_sec:
                     current_body.append(line_str)
@@ -114,6 +122,7 @@ class SectionParser:
                         sections["contact"] = {"raw": ""}
                         sec_order.insert(0, "contact")
                     sections["contact"]["raw"] += line_str + "\n"
+                prev_blank = False
 
         if current_sec and current_body:
             raw = "\n".join(current_body).strip()
@@ -187,6 +196,10 @@ class SectionParser:
         """Remove left-column label words that leaked into company/meta strings."""
         if not text:
             return ""
+        # PDF extraction can turn the "|" separator glyph into a capital "I"
+        # ("486-Hour | Imus, Cavite" arrives as "486-Hour I Imus, Cavite").
+        # Restore it only between a word and a capitalized word.
+        text = re.sub(r"(?<=\w)\s+I\s+(?=[A-Z])", " | ", text)
         # Remove standalone label tokens anywhere in the string
         text = re.sub(
             r"\b(?:Internship|Capstone|Academic|College|Freelance|Volunteer)\b",
@@ -194,27 +207,50 @@ class SectionParser:
             text,
             flags=re.I,
         )
-        # Collapse leftover separators
+        # Collapse leftover separators. A hyphen INSIDE a compound ("486-Hour",
+        # "Full-Stack") is never a separator -- only a hyphen surrounded by
+        # spaces is; em/en dashes always are.
+        text = re.sub(r"\s*[—–]\s*", " — ", text)
+        text = re.sub(r"(?:(?<=\s)|^)-(?:(?=\s)|$)", " — ", text)
         text = re.sub(r"\s*[|]\s*", " | ", text)
-        text = re.sub(r"\s*[—–\-]\s*", " — ", text)
         text = re.sub(r"(?:\s*\|\s*){2,}", " | ", text)
         text = re.sub(r"(?:\s*—\s*){2,}", " — ", text)
         text = re.sub(r"\s{2,}", " ", text)
         return text.strip(" |—–- \t")
 
     def _clean_degree(self, text: str) -> str:
-        """Strip a leading left-column label — but only when it is followed by
-        a separator (A15: 'University of the Philippines' must survive)."""
+        """Strip left-column label leakage from a degree line — without eating
+        school names (A15: 'University of the Philippines' must survive)."""
         if not text:
             return ""
+        # Two-column PDFs can duplicate the label: "Senior High Senior High School, ..."
         text = re.sub(
-            r"^(?:College|Senior\s*High(?:\s*School)?|University|Institute|School)\b"
-            r"(?:\s*[,:\u2013\u2014\u00b7-]\s*|\s*$)",
+            r"^(?P<label>Senior\s*High(?:\s*School)?)\s+(?P=label)\b",
+            r"\g<label>",
+            text,
+            flags=re.I,
+        )
+        # A left-column label merged in front of the real degree token:
+        # "College Bachelor of Science in ..." -> "Bachelor of Science in ..."
+        text = re.sub(
+            r"^(?:College|Senior\s*High(?:\s*School)?|University|Institute|School|Academy)\b"
+            r"\s*(?:[,:\u2013\u2014\u00b7-]\s*)?"
+            r"(?=(?:Bachelor|Master|Doctor|Ph\.?D|B\.?S\.?c?\.?|B\.?A\.?|M\.?S\.?|M\.?A\.?|"
+            r"Senior\s*High\s*School|Diploma|Certificate|GPA|GWA)\b)",
             "",
             text,
             flags=re.I,
             count=1,
-        ).strip()
+        )
+        # Separator-attached label: "School, ABM Strand", "Senior High, ABM Strand".
+        # Note "Senior High School, ABM Strand" is real degree content and is kept.
+        text = re.sub(
+            r"^(?:College|Senior\s*High|University|Institute|School)\b\s*[,:\u2013\u2014\u00b7]\s*",
+            "",
+            text,
+            flags=re.I,
+            count=1,
+        )
         # Label-only lines collapse to ""
         text = re.sub(
             r"^(?:College|Senior\s*High(?:\s*School)?|University|Institute|School)$",
@@ -506,6 +542,17 @@ class SectionParser:
                     current["_label"] = cleaned
                     continue
 
+                # A15: a left-column label merged into the line by the PDF
+                # extractor ("Internship Technology Solutions") is not content.
+                cleaned = re.sub(
+                    r"^(?:Internship|Capstone|Academic|Freelance|College|University|School)\s+",
+                    "",
+                    cleaned,
+                    flags=re.I,
+                )
+                if not cleaned:
+                    continue
+
                 if not current["title"]:
                     role, co = self._split_role_at_company(cleaned)
                     current["title"] = role[:100]
@@ -521,6 +568,22 @@ class SectionParser:
                             current["location"] = parts[-1]
                     else:
                         current["company"] = cleaned
+                    continue
+
+                # A15: long company names wrap onto the next line in
+                # two-column PDFs — merge a short non-meta line into the name.
+                if (
+                    not current["meta"]
+                    and not current["bullets"]
+                    and len(current["company"]) < 60
+                    and not re.search(
+                        r"\d|\b(?:full[- ]?time|part[- ]?time|contract|remote|hybrid|onsite|hour)\b",
+                        cleaned,
+                        re.I,
+                    )
+                    and not re.match(r"^[A-Z][\w.\s'-]*,\s*[A-Z]", cleaned)
+                ):
+                    current["company"] = f"{current['company']} {cleaned}"
                     continue
 
                 # extra meta
@@ -856,6 +919,14 @@ class SectionParser:
     # ─────────────────────────────────────────────
     # SKILLS
     # ─────────────────────────────────────────────
+    # A15: category labels inside skills lists ("Frontend: React.js, Next.js")
+    SKILL_CATEGORY_RE = re.compile(
+        r"^(?:languages?|frontend|backend|full[- ]?stack|databases?|tools?|"
+        r"frameworks?|libraries?|apis?(?:\s*&\s*orms?|\s*(?:&|and)\s*orms?)?|"
+        r"devops(?:\s*&\s*tools)?|soft\s*skills|others?)\s*[:\u2013\u2014]\s*",
+        re.I,
+    )
+
     def _parse_skills(self, text: str) -> list[str]:
         if not text:
             return []
@@ -865,6 +936,7 @@ class SectionParser:
         skills = []
         for p in parts:
             c = p.strip().strip("-").strip("*").strip()
+            c = self.SKILL_CATEGORY_RE.sub("", c).strip()
             if c and 1 < len(c) < 60:
                 skills.append(c)
         seen = set()

@@ -128,7 +128,7 @@ class EducationParsingTests(unittest.TestCase):
 
     def test_master_layout_label_prefix_still_stripped(self):
         self.assertEqual(self.parser._clean_degree("School, ABM Strand"), "ABM Strand")
-        self.assertEqual(self.parser._clean_degree("Senior High School — ABM Strand"), "ABM Strand")
+        self.assertEqual(self.parser._clean_degree("Senior High — ABM Strand"), "ABM Strand")
         self.assertEqual(self.parser._clean_degree("College"), "")
 
 
@@ -182,6 +182,79 @@ class FixtureTests(unittest.TestCase):
         contact = sections["contact_parsed"]
         self.assertEqual(contact["github"], "github.com/juandelacruz")
         self.assertEqual(contact["email"], "juan.delacruz@email.com")
+
+
+class RealResumePatternTests(unittest.TestCase):
+    """A15 follow-up: patterns taken from a real two-column PDF resume."""
+
+    def setUp(self):
+        self.parser = SectionParser()
+
+    def test_labeled_skill_lines_stay_in_skills(self):
+        # "Languages: JavaScript" under a TECHNICAL SKILLS header is content,
+        # not a LANGUAGES section header.
+        sections = self.parser.parse(
+            "TECHNICAL SKILLS\n"
+            "Languages: JavaScript, TypeScript, PHP, C++\n"
+            "Frontend: React.js, Next.js, HTML5\n"
+            "Backend: Node.js, NestJS, PHP\n"
+            "Databases: MySQL, PostgreSQL\n"
+            "DevOps & Tools: Docker, Nginx, Git"
+        )
+        order = sections["_section_order"]
+        self.assertIn("skills", order)
+        self.assertNotIn("languages", order)
+        skills = sections["skills_parsed"]
+        self.assertIn("JavaScript", skills)
+        self.assertIn("React.js", skills)
+        self.assertIn("Docker", skills)
+        self.assertFalse(any("Languages" in s or "Frontend" in s or "DevOps" in s for s in skills))
+
+    def test_company_name_wrapping_is_merged(self):
+        raw = (
+            "2026 Backend Developer Intern at Infotech Solutions\n"
+            "Internship Technology Group\n"
+            "486-Hour Internship I Imus, Cavite\n"
+            "- Built backend schemas and GraphQL APIs\n"
+        )
+        entries = self.parser._parse_experience(raw)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["title"], "Backend Developer Intern")
+        self.assertEqual(entries[0]["company"], "Infotech Solutions Technology Group | 486-Hour | Imus, Cavite")
+
+    def test_clean_company_keeps_hyphenated_compounds(self):
+        self.assertEqual(self.parser._clean_company("486-Hour"), "486-Hour")
+        self.assertEqual(self.parser._clean_company("Full-Stack Developer"), "Full-Stack Developer")
+        self.assertEqual(self.parser._clean_company("E-Commerce System"), "E-Commerce System")
+        self.assertEqual(self.parser._clean_company("Acme - Full-Stack Developer"), "Acme — Full-Stack Developer")
+
+    def test_clean_company_restores_pipe_from_capital_i(self):
+        self.assertEqual(
+            self.parser._clean_company("486-Hour Internship I Imus, Cavite"),
+            "486-Hour | Imus, Cavite",
+        )
+
+    def test_clean_degree_strips_merged_label_before_degree_token(self):
+        self.assertEqual(
+            self.parser._clean_degree("College Bachelor of Science in Information Technology - Cum Laude"),
+            "Bachelor of Science in Information Technology - Cum Laude",
+        )
+
+    def test_clean_degree_dedupes_duplicated_senior_high(self):
+        self.assertEqual(
+            self.parser._clean_degree("Senior High Senior High School, ABM Strand — Graduated with Highest Honors"),
+            "Senior High School, ABM Strand — Graduated with Highest Honors",
+        )
+
+    def test_clean_degree_still_protects_university_names(self):
+        self.assertEqual(self.parser._clean_degree("University of the Philippines"), "University of the Philippines")
+        self.assertEqual(self.parser._clean_degree("University of Santo Tomas"), "University of Santo Tomas")
+        self.assertEqual(self.parser._clean_degree("School, ABM Strand"), "ABM Strand")
+
+    def test_inline_caps_label_anywhere_is_a_header(self):
+        sections = self.parser.parse("EXPERIENCE\nBuilt REST APIs\nSKILLS: Python, React")
+        self.assertEqual(sections["_section_order"], ["experience", "skills"])
+        self.assertEqual(sections["skills_parsed"], ["Python", "React"])
 
 
 if __name__ == "__main__":
