@@ -111,5 +111,39 @@ class ScoreTests(unittest.TestCase):
         self.assertIsNone(r["score"])
 
 
+class SoftSkillSeparationTests(unittest.TestCase):
+    """A3: soft skills are advice only — never added to the skills section."""
+
+    def test_soft_missing_keywords_are_flagged_separately(self):
+        r = ke.analyze("Backend developer using Python.", JD)
+        # still counted in the keyword score/missing list...
+        self.assertIn("Communication", r["missing_keywords"])
+        # ...but flagged so the UI can steer them to bullets instead
+        self.assertIn("Communication", r["soft_missing_keywords"])
+        self.assertIn("Teamwork", r["soft_missing_keywords"])
+        self.assertNotIn("Docker", r["soft_missing_keywords"])
+        self.assertIn("Docker", r["missing_keywords"])
+
+
+class SkillCategoryTests(unittest.TestCase):
+    """A3: confirmed keywords fold into the matching labeled skills line."""
+
+    def test_every_hard_skill_has_exactly_one_category(self):
+        from app.common.skills import HARD_SKILLS, HARD_SKILL_CATEGORIES
+
+        mapped = [name for names in HARD_SKILL_CATEGORIES.values() for name in names]
+        self.assertEqual(len(mapped), len(set(mapped)), "duplicate category entry")
+        self.assertEqual(set(mapped), set(HARD_SKILLS))
+
+    def test_resume_labels_match_their_categories(self):
+        from app.common.skills import label_matches_category
+
+        self.assertTrue(label_matches_category("Databases", "Databases"))
+        self.assertTrue(label_matches_category("APIs & ORMs", "Backend"))
+        self.assertTrue(label_matches_category("DevOps & Tools", "Cloud & DevOps"))
+        self.assertTrue(label_matches_category("DevOps & Tools", "Process & Tools"))
+        self.assertFalse(label_matches_category("Languages", "Databases"))
+
+
 if __name__ == "__main__":
     unittest.main()

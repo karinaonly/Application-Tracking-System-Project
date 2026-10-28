@@ -17,6 +17,7 @@ from app.analyzer.ai_rewriter import AIRewriter
 from app.analyzer.scoring import compute_overall
 from app.export.docx_exporter import DocxExporter
 from app.common.exceptions import AnalysisNotFoundError, JobNotFoundError, ResumeNotFoundError, VersionNotFoundError
+from app.common.skills import is_soft_skill
 
 # How many flagged bullets we'll attempt to send for AI rewriting per analysis.
 # AIRewriter.MAX_BULLETS_PER_CALL caps what actually goes in the API request;
@@ -277,12 +278,16 @@ class ResumeService:
 
     def confirm_keywords(
         self, resume_id: UUID, analysis_id: UUID, user_id: UUID, keywords: list
-    ) -> list[str]:
+    ) -> tuple[list[str], list[str]]:
         """Store the missing keywords the user confirms they actually have.
 
         Each keyword must belong to this analysis's ``missing_keywords``
         (case-insensitive match, canonical spelling stored) — nothing is
         added to the resume without the user's explicit confirmation.
+
+        Returns ``(confirmed, soft_skipped)``. Soft skills are reported back
+        but not stored/exported: a list of adjectives is unverifiable and
+        belongs in bullets, not in a skills section.
         """
         resume = self.session.get(Resume, resume_id)
         if not resume or resume.user_id != user_id:
@@ -318,8 +323,17 @@ class ResumeService:
                     + ", ".join(unknown)
                 ),
             )
+
+        soft_skipped = [kw for kw in confirmed if is_soft_skill(kw)]
+        confirmed = [kw for kw in confirmed if not is_soft_skill(kw)]
         if not confirmed:
-            raise HTTPException(status_code=400, detail="No keywords to confirm")
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Soft skills aren't added to the Skills section — show "
+                    "them in your bullets where you actually used them."
+                ),
+            )
 
         report = analysis.report or {}
         # Build a NEW dict: reassigning the same object after an in-place
@@ -334,7 +348,7 @@ class ResumeService:
         self.session.add(analysis)
         self.session.commit()
         self.session.refresh(analysis)
-        return confirmed
+        return confirmed, soft_skipped
 
     # ------------------------------------------------------------------ #
     # D3: per-job tailored resume versions

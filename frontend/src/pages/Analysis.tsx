@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Download, RefreshCw, ChevronDown, ChevronUp, Copy, CheckCircle, Check, XCircle, AlertTriangle, Lightbulb, BarChart2, Target, Edit3, Zap, BookOpen, ArrowLeftRight, Shield, Save } from "lucide-react"
+import { Download, RefreshCw, ChevronDown, ChevronUp, Copy, CheckCircle, Check, XCircle, AlertTriangle, Lightbulb, BarChart2, Target, Edit3, Zap, BookOpen, ArrowLeftRight, Shield, Save, Info } from "lucide-react"
 import type { PageProps } from "../types"
 import * as api from "../api"
 
@@ -270,7 +270,10 @@ export default function Analysis({ navigate, addToast }: PageProps) {
           report: { ...analysis.report, confirmed_keywords: res.confirmed_keywords },
         })
       }
-      addToast("success", `${res.confirmed_keywords.length} skill${res.confirmed_keywords.length === 1 ? "" : "s"} will be added to your exported resume.`)
+      if (res.soft_skipped && res.soft_skipped.length > 0) {
+        addToast("info", `${res.soft_skipped.join(", ")} ${res.soft_skipped.length === 1 ? "is a soft skill" : "are soft skills"} — show ${res.soft_skipped.length === 1 ? "it" : "them"} in your bullets instead, not in Skills.`)
+      }
+      addToast("success", `${res.confirmed_keywords.length} technical skill${res.confirmed_keywords.length === 1 ? "" : "s"} will be added to your exported resume.`)
     } catch (error) { addToast("error", error instanceof Error ? error.message : "Could not confirm keywords") }
     finally { setConfirmLoading(false) }
   }
@@ -303,6 +306,9 @@ export default function Analysis({ navigate, addToast }: PageProps) {
   const passedChecks = report?.ats?.passed ?? []
   const matchedKws = report?.keyword_analysis?.matched_keywords ?? []
   const missingKws = report?.keyword_analysis?.missing_keywords ?? []
+  // A3: soft skills (Communication, Leadership, ...) are advice only — they
+  // are never added to the Skills section; they belong in bullets.
+  const softMissing = report?.keyword_analysis?.soft_missing_keywords ?? []
   // A3: keywords the user confirmed they actually have (stored on the
   // analysis + anything confirmed during this visit)
   const confirmedKws = Array.from(new Set([
@@ -610,6 +616,18 @@ export default function Analysis({ navigate, addToast }: PageProps) {
                 </p>
                 <div className="flex flex-wrap gap-1.5">
                   {missingKws.map(k => {
+                    if (softMissing.includes(k)) {
+                      return (
+                        <span
+                          key={k}
+                          title="Soft skill — show it in a bullet where you actually used it; it isn't added to the Skills section."
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border border-dashed"
+                          style={{ background: "rgba(217,119,6,0.06)", color: "#B45309", borderColor: "rgba(217,119,6,0.35)" }}
+                        >
+                          <Info size={11} /> {k}
+                        </span>
+                      )
+                    }
                     const isConfirmed = confirmedKws.includes(k)
                     const isSelected = selectedKws.includes(k)
                     if (isConfirmed) {
@@ -641,8 +659,14 @@ export default function Analysis({ navigate, addToast }: PageProps) {
                 {missingKws.length > 0 && (
                   <div className="mt-3">
                     <p className="text-xs text-dim leading-relaxed mb-2">
-                      Tick only the skills you actually have — confirmed keywords are added to the Skills section of your exported resume. Never confirm a skill you couldn't discuss in an interview.
+                      Tick only the technical skills you actually have — confirmed keywords are added to the matching line of your exported resume's Skills section (e.g. "Databases: MySQL, SQL"). Never confirm a skill you couldn't discuss in an interview.
                     </p>
+                    {softMissing.length > 0 && (
+                      <p className="text-xs leading-relaxed mb-2" style={{ color: "#B45309" }}>
+                        <Info size={11} className="inline mr-1 -mt-0.5" />
+                        Soft skills ({softMissing.join(", ")}) aren't added to the Skills section — show them in your bullets where you actually used them.
+                      </p>
+                    )}
                     {selectedKws.length > 0 && (
                       <button
                         onClick={handleConfirmKeywords}

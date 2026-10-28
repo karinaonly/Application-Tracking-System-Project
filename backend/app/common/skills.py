@@ -11,6 +11,8 @@ Rules of thumb when adding entries:
   "JavaScript", and "js" will NOT match inside "Node.js".
 """
 
+import re
+
 HARD_SKILLS: dict[str, list[str]] = {
     # ---- Languages ----
     "Python": [],
@@ -186,3 +188,119 @@ SOFT_SKILL_GROUPS: dict[str, list[str]] = {
 # For these, the canonical form is matched case-sensitively ("Excel", not "excel at...").
 # Their aliases (e.g. "ms excel") are still matched case-insensitively.
 CASE_SENSITIVE: set[str] = {"Excel", "Swift", "Spark", "Oracle", "Ruby", "Rust"}
+
+
+# ---------------------------------------------------------------------------
+# Skill categories (A3 refinement)
+# ---------------------------------------------------------------------------
+# Confirmed keywords are folded into the matching labeled line of the resume's
+# skills section ("Databases: MySQL, SQL") instead of a bolted-on list. Skills
+# not covered here fall back to the "Additional Skills" line. A consistency
+# test asserts this mapping covers every HARD_SKILLS entry exactly once.
+HARD_SKILL_CATEGORIES: dict[str, list[str]] = {
+    "Languages": [
+        "Python", "JavaScript", "TypeScript", "Java", "C#", "C++", "PHP",
+        "Golang", "Rust", "Kotlin", "Swift", "Ruby", "Bash", "R Programming",
+    ],
+    "Frontend": [
+        "HTML", "CSS", "React", "Next.js", "Vue.js", "Angular",
+        "Tailwind CSS", "Redux", "Bootstrap", "Vite",
+    ],
+    "Backend": [
+        "Node.js", "Express.js", "FastAPI", "Django", "Flask", "Spring Boot",
+        "Laravel", "ASP.NET", ".NET", "GraphQL", "REST API", "Microservices",
+        "WebSockets", "API Development",
+    ],
+    "Databases": [
+        "SQL", "PostgreSQL", "MySQL", "SQLite", "MongoDB", "Redis",
+        "SQL Server", "Oracle", "Elasticsearch", "NoSQL", "SQLAlchemy",
+        "SQLModel", "Firebase", "Supabase",
+    ],
+    "Cloud & DevOps": [
+        "AWS", "Azure", "GCP", "Docker", "Kubernetes", "Terraform", "Ansible",
+        "Jenkins", "GitHub Actions", "CI/CD", "Git", "GitHub", "GitLab",
+        "Linux", "Nginx", "Serverless",
+    ],
+    "Data & ML": [
+        "Machine Learning", "Deep Learning", "NLP", "Pandas", "NumPy",
+        "scikit-learn", "TensorFlow", "PyTorch", "Data Analysis",
+        "Data Visualization", "Power BI", "Tableau", "Excel", "ETL", "Spark",
+        "Airflow", "Kafka", "LLM", "OpenAI", "Prompt Engineering",
+    ],
+    "Testing": [
+        "Unit Testing", "Pytest", "Jest", "Selenium", "Cypress", "Postman",
+        "TDD", "Quality Assurance",
+    ],
+    "Security": ["JWT", "OAuth", "Authentication", "Authorization"],
+    "Process & Tools": [
+        "Agile", "Scrum", "Kanban", "Jira", "Confluence", "Swagger",
+        "System Design", "Object-Oriented Programming", "Design Patterns",
+        "Figma",
+    ],
+    "Mobile": ["Android", "iOS", "React Native", "Flutter"],
+    "Business": [
+        "Project Management", "Customer Service", "Data Entry",
+        "Microsoft Office", "Salesforce", "SEO", "Content Writing",
+        "Bookkeeping", "Budgeting",
+    ],
+}
+
+SKILL_CATEGORY_LOOKUP: dict[str, str] = {
+    name.lower(): category
+    for category, names in HARD_SKILL_CATEGORIES.items()
+    for name in names
+}
+
+# Words that identify a resume's own skills label as one of our categories.
+# Matching is whole-word and per-category, so "DevOps & Tools" can accept both
+# Cloud & DevOps skills and the design tools that belong to Process & Tools.
+CATEGORY_LABEL_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "Languages": ("language", "languages", "programming"),
+    "Frontend": ("frontend", "front end", "ui", "client side", "web"),
+    "Backend": ("backend", "back end", "server", "framework", "frameworks",
+                "api", "apis", "orm", "orms"),
+    "Databases": ("database", "databases", "db", "storage"),
+    "Cloud & DevOps": ("cloud", "devops", "dev ops", "infrastructure",
+                       "tools", "tooling", "version control", "ci/cd",
+                       "platform"),
+    "Data & ML": ("data", "analytics", "machine learning", "ml", "ai"),
+    "Testing": ("testing", "test", "qa", "quality"),
+    "Security": ("security", "auth", "authentication", "authorization"),
+    "Process & Tools": ("process", "processes", "methodology", "tools",
+                        "tooling", "practices", "project"),
+    "Mobile": ("mobile", "android", "ios"),
+    "Business": ("business", "general", "soft"),
+}
+
+_SOFT_NAME_LOOKUP: set[str] = {name.lower() for name in SOFT_SKILL_GROUPS} | {
+    alias.lower()
+    for aliases in SOFT_SKILL_GROUPS.values()
+    for alias in aliases
+}
+
+
+def skill_category(name: str) -> str | None:
+    """Category for a canonical skill name, or None when not in the taxonomy."""
+    return SKILL_CATEGORY_LOOKUP.get(name.strip().lower())
+
+
+def is_soft_skill(name: str) -> bool:
+    """True for soft skills (Communication, Leadership, ...) and their aliases.
+
+    Soft skills are NOT added to a resume's skills list: a list of adjectives is
+    unverifiable and reads like keyword stuffing. They belong in bullets.
+    """
+    return name.strip().lower() in _SOFT_NAME_LOOKUP
+
+
+def label_matches_category(label: str, category: str) -> bool:
+    """True when a resume's own skills label ("Databases", "DevOps & Tools")
+    identifies the given category."""
+    keywords = CATEGORY_LABEL_KEYWORDS.get(category, ())
+    if not keywords:
+        return False
+    norm = re.sub(r"[^a-z0-9&/ ]+", " ", label.lower())
+    return any(
+        re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", norm)
+        for word in keywords
+    )

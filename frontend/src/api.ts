@@ -95,6 +95,9 @@ export interface ResumeAnalysis {
       other_terms_missing?: string[]
       matched_keywords?: string[]
       missing_keywords?: string[]
+      // A3: subset of missing_keywords that are soft skills — shown as advice
+      // only, never added to the exported Skills section.
+      soft_missing_keywords?: string[]
     }
     // A3: missing keywords the user confirmed they actually have; only
     // these are injected into the exported resume's Skills section.
@@ -231,8 +234,8 @@ export async function confirmKeywords(
   resumeId: string,
   analysisId: string,
   keywords: string[]
-): Promise<{ confirmed_keywords: string[] }> {
-  return request<{ confirmed_keywords: string[] }>(
+): Promise<{ confirmed_keywords: string[]; soft_skipped?: string[] }> {
+  return request<{ confirmed_keywords: string[]; soft_skipped?: string[] }>(
     `/resumes/${resumeId}/analyses/${analysisId}/confirm-keywords`,
     { method: "POST", body: JSON.stringify({ keywords }) }
   )

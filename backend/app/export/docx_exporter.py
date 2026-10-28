@@ -10,7 +10,12 @@ from docx.enum.style import WD_STYLE_TYPE
 from docx.oxml import parse_xml
 from docx.oxml.ns import nsdecls, qn
 
-from app.common.skills import HARD_SKILLS
+from app.common.skills import (
+    HARD_SKILLS,
+    is_soft_skill,
+    label_matches_category,
+    skill_category,
+)
 
 
 _CAMEL_BOUNDARY_RE = re.compile(r"[a-z][A-Z]")
@@ -552,7 +557,15 @@ class DocxExporter:
     # ---------------------------------------------------------------- #
 
     def _add_skills(self, doc, text: str, missing_keywords: list[str] | None):
-        for line in self._clean_lines(text):
+        lines = self._clean_lines(text)
+        # A3: only user-confirmed technical skills reach the export. They fold
+        # into the matching labeled line ("Databases: MySQL, SQL"); anything
+        # without a matching line falls back to "Additional Skills". Soft
+        # skills never get here (see _filter_keywords).
+        leftover = self._fold_keywords_into_skills(
+            lines, self._filter_keywords(text, missing_keywords)
+        )
+        for line in lines:
             p = doc.add_paragraph()
             p.paragraph_format.space_after = Pt(1)
             p.paragraph_format.line_spacing = 1.08
@@ -568,12 +581,7 @@ class DocxExporter:
                 r = p.add_run(line)
                 self._force_font(r, size_pt=9.5, color=self.COLOR_BODY_RGB)
 
-        # A3: only keywords the user confirmed they actually have reach the
-        # export, rendered as a standard ATS "Additional Skills" line.
-        # _filter_keywords (previously dead code) drops fluff, duplicates,
-        # and anything the skills text already covers.
-        additional = self._filter_keywords(text, missing_keywords)
-        if additional:
+        if leftover:
             p = doc.add_paragraph()
             p.paragraph_format.space_after = Pt(1)
             p.paragraph_format.line_spacing = 1.08
@@ -581,8 +589,36 @@ class DocxExporter:
             self._force_font(
                 r_label, size_pt=9.5, bold=True, color=self.COLOR_BODY_RGB
             )
-            r_rest = p.add_run(", ".join(additional))
+            r_rest = p.add_run(", ".join(leftover))
             self._force_font(r_rest, size_pt=9.5, color=self.COLOR_BODY_RGB)
+
+    def _fold_keywords_into_skills(
+        self, lines: list[str], keywords: list[str]
+    ) -> list[str]:
+        """Append each keyword to its matching labeled line; return leftovers."""
+        leftover = []
+        for kw in keywords:
+            category = skill_category(kw)
+            target = None
+            if category:
+                for index, line in enumerate(lines):
+                    label, sep, _ = line.partition(":")
+                    if sep and label_matches_category(label, category):
+                        target = index
+                        break
+            if target is None:
+                leftover.append(kw)
+            else:
+                lines[target] = self._append_skill_to_line(lines[target], kw)
+        return leftover
+
+    @staticmethod
+    def _append_skill_to_line(line: str, keyword: str) -> str:
+        if ":" in line:
+            label, _, rest = line.partition(":")
+            rest = rest.strip()
+            return f"{label.strip()}: {rest + ', ' if rest else ''}{keyword}"
+        return f"{line.rstrip()}, {keyword}"
 
     def _filter_keywords(
         self, skills_text: str, missing_keywords: list[str] | None
@@ -595,6 +631,11 @@ class DocxExporter:
             cleaned = kw.strip().strip("-").strip("*").strip()
             k_lower = cleaned.lower()
             if not k_lower or k_lower in seen:
+                continue
+            # A list of soft-skill adjectives ("Innovative, Interpersonal") is
+            # unverifiable and reads like keyword stuffing — they belong in
+            # bullets, so they are never added to the skills list.
+            if is_soft_skill(cleaned):
                 continue
             # Whole-word match, not substring: "SQL" must not be considered
             # already listed just because the skills text says "MySQL" (this

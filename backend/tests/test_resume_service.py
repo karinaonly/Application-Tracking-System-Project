@@ -322,12 +322,13 @@ class ConfirmKeywordsTests(unittest.TestCase):
         })
         self._wire(resume, analysis)
 
-        confirmed = self.service.confirm_keywords(
+        confirmed, soft_skipped = self.service.confirm_keywords(
             resume.id, analysis.id, owner_id, ["postgresql", "Docker Compose"]
         )
 
         # canonical spellings from the analysis's own missing list
         self.assertEqual(confirmed, ["PostgreSQL", "docker compose"])
+        self.assertEqual(soft_skipped, [])
         self.assertEqual(analysis.report["confirmed_keywords"], confirmed)
         self.service.session.add.assert_called()
         self.service.session.commit.assert_called()
@@ -358,6 +359,37 @@ class ConfirmKeywordsTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as ctx:
             self.service.confirm_keywords(resume.id, analysis.id, owner_id, [])
         self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_soft_skills_are_skipped_not_stored(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        analysis = make_analysis(resume.id, report={
+            "keyword_analysis": {"missing_keywords": ["Communication", "Docker"]},
+        })
+        self._wire(resume, analysis)
+
+        confirmed, soft_skipped = self.service.confirm_keywords(
+            resume.id, analysis.id, owner_id, ["Communication", "Docker"]
+        )
+
+        self.assertEqual(confirmed, ["Docker"])
+        self.assertEqual(soft_skipped, ["Communication"])
+        self.assertEqual(analysis.report["confirmed_keywords"], ["Docker"])
+
+    def test_only_soft_skills_is_rejected(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        analysis = make_analysis(resume.id, report={
+            "keyword_analysis": {"missing_keywords": ["Communication"]},
+        })
+        self._wire(resume, analysis)
+
+        with self.assertRaises(HTTPException) as ctx:
+            self.service.confirm_keywords(
+                resume.id, analysis.id, owner_id, ["Communication"]
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertNotIn("confirmed_keywords", analysis.report)
 
     def test_foreign_analysis_is_rejected(self):
         owner_id = uuid4()

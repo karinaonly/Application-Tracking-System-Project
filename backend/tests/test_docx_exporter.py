@@ -247,6 +247,48 @@ class KeywordFilterTests(unittest.TestCase):
         text = document_text(DocxExporter().export_tailored(make_sections()))
         self.assertNotIn("Additional Skills", text)
 
+    def test_hard_skill_folds_into_matching_category(self):
+        sections = make_sections()
+        sections["skills"] = {"raw": (
+            "Languages: Python, JavaScript\n"
+            "Databases: MySQL, PostgreSQL\n"
+            "DevOps & Tools: Docker, Git"
+        )}
+        text = document_text(
+            DocxExporter().export_tailored(
+                sections, missing_keywords=["SQL", "Linux"]
+            )
+        )
+        # folded into the existing labeled lines, not bolted on
+        self.assertIn("Databases: MySQL, PostgreSQL, SQL", text)
+        self.assertIn("DevOps & Tools: Docker, Git, Linux", text)
+        self.assertNotIn("Additional Skills", text)
+
+    def test_unmatched_hard_skill_falls_back_to_additional_skills(self):
+        sections = make_sections()
+        sections["skills"] = {"raw": "Languages: Python"}
+        text = document_text(
+            DocxExporter().export_tailored(
+                sections, missing_keywords=["Kubernetes"]
+            )
+        )
+        self.assertIn("Additional Skills: Kubernetes", text)
+
+    def test_soft_skills_are_never_added_to_skills(self):
+        # "Innovative, Interpersonal" belongs in bullets, not a skills list.
+        text = document_text(
+            DocxExporter().export_tailored(
+                make_sections(),
+                missing_keywords=["Communication", "Interpersonal"],
+            )
+        )
+        self.assertNotIn("Additional Skills", text)
+        self.assertNotIn("Interpersonal", text)
+
+    def test_filter_excludes_soft_skills(self):
+        out = DocxExporter()._filter_keywords("", ["Communication", "Docker"])
+        self.assertEqual(out, ["Docker"])
+
 
 if __name__ == "__main__":
     unittest.main()

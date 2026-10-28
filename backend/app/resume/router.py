@@ -98,8 +98,10 @@ def confirm_keywords(
     if not isinstance(keywords, list):
         raise HTTPException(status_code=400, detail="keywords must be a list")
     service = ResumeService(session)
-    confirmed = service.confirm_keywords(resume_id, analysis_id, user.id, keywords)
-    return {"confirmed_keywords": confirmed}
+    confirmed, soft_skipped = service.confirm_keywords(
+        resume_id, analysis_id, user.id, keywords
+    )
+    return {"confirmed_keywords": confirmed, "soft_skipped": soft_skipped}
 
 @router.post("/{resume_id}/versions", status_code=201)
 def create_version(

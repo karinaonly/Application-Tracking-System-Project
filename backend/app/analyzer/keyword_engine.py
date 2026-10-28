@@ -80,6 +80,11 @@ class KeywordEngine:
         other_terms = self._extract_other_terms(jd_text, exclude={n.lower() for n, _ in jd_skills})
         missing_other = [t for t in other_terms if not self._contains_plain(resume_text, t)]
 
+        # A3: soft skills are only advice — they must not be listed in a
+        # skills section (a list of adjectives is unverifiable and reads like
+        # keyword stuffing), so the UI shows them separately.
+        soft_missing = [name for name in missing if name in _SOFT_NAMES]
+
         return {
             "score": score,                        # None => not enough recognizable skills in the JD
             "score_available": available,
@@ -91,6 +96,7 @@ class KeywordEngine:
             "total_jd_keywords": len(jd_skills),
             "matched_keywords": matched,           # ranked by how often the JD mentions them
             "missing_keywords": missing,
+            "soft_missing_keywords": soft_missing, # informational only, never added to skills
             "keyword_details": details,
             "other_terms_missing": missing_other,  # informational only, NOT part of the score
         }
