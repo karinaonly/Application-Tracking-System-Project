@@ -2,9 +2,11 @@ import unittest
 from unittest.mock import MagicMock
 from uuid import uuid4
 
-from app.common.exceptions import AnalysisNotFoundError, JobNotFoundError
+from fastapi import HTTPException
+
+from app.common.exceptions import AnalysisNotFoundError, JobNotFoundError, ResumeNotFoundError, VersionNotFoundError
 from app.jobs.models import JobDescription
-from app.resume.models import Resume, ResumeAnalysis
+from app.resume.models import Resume, ResumeAnalysis, ResumeVersion
 from app.resume.service import ResumeService
 
 
@@ -70,10 +72,11 @@ class AnalyzeJobOwnershipTests(unittest.TestCase):
             self.service.analyze(resume.id, owner_id, missing_job_id)
 
 
-def make_analysis(resume_id, report=None) -> ResumeAnalysis:
+def make_analysis(resume_id, report=None, job_id=None) -> ResumeAnalysis:
     return ResumeAnalysis(
         id=uuid4(),
         resume_id=resume_id,
+        job_id=job_id,
         overall_score=70.0,
         ats_score=80.0,
         keyword_score=60.0,
@@ -252,6 +255,165 @@ class ExportAnalysisSelectionTests(unittest.TestCase):
 
         kwargs = self.exporter.export_tailored.call_args.kwargs
         self.assertEqual(kwargs["rewritten_bullets"], {"b": {"ai_output": "LATEST"}})
+
+
+class VersionTests(unittest.TestCase):
+    """D3: per-job tailored resume versions stored server-side."""
+
+    def setUp(self):
+        self.service = ResumeService(MagicMock())
+        self.exporter = MagicMock()
+        self.exporter.export_tailored.return_value = b"docx"
+        self.service.exporter = self.exporter
+
+    def _make_resume(self, owner_id) -> Resume:
+        return Resume(
+            id=uuid4(), user_id=owner_id, filename="r.pdf", file_path="r.pdf",
+            file_type=".pdf",
+            raw_text="Summary line here\nDid tasks for the team\nSkills: Python",
+            parsed_data={"sections": {
+                "experience": {"raw": "Did tasks for the team"},
+                "experience_parsed": [{
+                    "title": "Dev", "company": "Acme", "dates": "2024",
+                    "bullets": ["Did tasks for the team"],
+                }],
+            }, "metadata": {}},
+        )
+
+    def _make_analysis(self, resume, job_id=None, ai_output="Led 5-member team") -> ResumeAnalysis:
+        return make_analysis(resume.id, report={
+            "ai_rewritten_examples": {
+                "Did tasks for the team": {"ai_output": ai_output, "source": "groq"},
+            },
+        }, job_id=job_id)
+
+    def _wire_session(self, resume, analysis, job=None, existing_version=None):
+        def fake_get(model, _id):
+            if model is Resume:
+                return resume
+            if model is ResumeAnalysis:
+                return analysis
+            if model is JobDescription:
+                return job
+            if model is ResumeVersion:
+                return existing_version
+            return None
+
+        self.service.session.get.side_effect = fake_get
+        fake_result = MagicMock()
+        fake_result.first.return_value = existing_version
+        self.service.session.exec.return_value = fake_result
+
+    def test_version_stores_tailored_text_and_sections(self):
+        owner_id = uuid4()
+        resume = self._make_resume(owner_id)
+        job = JobDescription(id=uuid4(), user_id=owner_id, title="Backend", raw_text="jd")
+        analysis = self._make_analysis(resume, job_id=job.id)
+        self._wire_session(resume, analysis, job=job)
+
+        version = self.service.create_version(resume.id, owner_id, analysis.id)
+
+        self.assertEqual(version.job_id, job.id)
+        self.assertEqual(version.label, "Tailored for Backend")
+        self.assertEqual(version.applied_rewrites, {"Did tasks for the team": "Led 5-member team"})
+        # raw text and both section shapes carry the rewrite
+        self.assertIn("Led 5-member team", version.raw_text)
+        self.assertNotIn("Did tasks for the team", version.raw_text)
+        self.assertEqual(
+            version.parsed_data["sections"]["experience_parsed"][0]["bullets"],
+            ["Led 5-member team"],
+        )
+        self.assertEqual(version.parsed_data["sections"]["experience"]["raw"], "Led 5-member team")
+
+    def test_version_with_no_applied_rewrites_is_rejected(self):
+        owner_id = uuid4()
+        resume = self._make_resume(owner_id)
+        # rewrite withheld: ai_output identical to the original
+        analysis = self._make_analysis(resume, ai_output="Did tasks for the team")
+        self._wire_session(resume, analysis)
+
+        with self.assertRaises(HTTPException) as ctx:
+            self.service.create_version(resume.id, owner_id, analysis.id)
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_version_from_foreign_analysis_is_rejected(self):
+        owner_id = uuid4()
+        resume = self._make_resume(owner_id)
+        analysis = self._make_analysis(resume)
+        analysis.resume_id = uuid4()  # belongs to a different resume
+        self._wire_session(resume, analysis)
+
+        with self.assertRaises(AnalysisNotFoundError):
+            self.service.create_version(resume.id, owner_id, analysis.id)
+
+    def test_version_for_foreign_resume_is_rejected(self):
+        owner_id = uuid4()
+        resume = self._make_resume(owner_id)
+        analysis = self._make_analysis(resume)
+
+        def fake_get(model, _id):
+            return resume if model is Resume else None
+
+        self.service.session.get.side_effect = fake_get
+
+        with self.assertRaises(ResumeNotFoundError):
+            self.service.create_version(resume.id, uuid4(), analysis.id)
+
+    def test_version_upsert_replaces_previous_for_same_job(self):
+        owner_id = uuid4()
+        resume = self._make_resume(owner_id)
+        job = JobDescription(id=uuid4(), user_id=owner_id, title="Backend", raw_text="jd")
+        analysis = self._make_analysis(resume, job_id=job.id)
+        previous = ResumeVersion(
+            id=uuid4(), resume_id=resume.id, job_id=job.id, analysis_id=uuid4(),
+            label="Tailored for Backend", raw_text="old", parsed_data={},
+            applied_rewrites={"old": "older"},
+        )
+        self._wire_session(resume, analysis, job=job, existing_version=previous)
+
+        version = self.service.create_version(resume.id, owner_id, analysis.id)
+
+        self.assertIs(version, previous)  # updated in place, not duplicated
+        self.assertEqual(version.analysis_id, analysis.id)
+        self.assertEqual(version.raw_text, resume.raw_text.replace("Did tasks for the team", "Led 5-member team"))
+        self.assertEqual(version.applied_rewrites, {"Did tasks for the team": "Led 5-member team"})
+
+    def test_export_version_uses_stored_sections_and_job_title(self):
+        owner_id = uuid4()
+        resume = self._make_resume(owner_id)
+        job = JobDescription(id=uuid4(), user_id=owner_id, title="Backend Dev", raw_text="jd")
+        analysis = make_analysis(resume.id, report={"keyword_analysis": {"missing_keywords": ["Docker"]}})
+        version = ResumeVersion(
+            id=uuid4(), resume_id=resume.id, job_id=job.id, analysis_id=analysis.id,
+            label="Tailored for Backend Dev",
+            raw_text="tailored",
+            parsed_data={"sections": {"experience_parsed": [{"bullets": ["Led 5-member team"]}]}},
+            applied_rewrites={"Did tasks for the team": "Led 5-member team"},
+        )
+        self._wire_session(resume, analysis, job=job, existing_version=version)
+
+        data, filename = self.service.export_version_docx(resume.id, version.id, owner_id)
+
+        self.assertEqual(data, b"docx")
+        self.assertEqual(filename, "Resume_Tailored_Backend_Dev.docx")
+        kwargs = self.exporter.export_tailored.call_args.kwargs
+        # bullets are already tailored in the stored sections -- no rewrite map passed
+        self.assertEqual(kwargs["rewritten_bullets"], {})
+        self.assertEqual(kwargs["sections"], version.parsed_data["sections"])
+        self.assertEqual(kwargs["target_role"], "Backend Dev")
+        self.assertEqual(kwargs["missing_keywords"], ["Docker"])
+
+    def test_export_foreign_version_is_rejected(self):
+        owner_id = uuid4()
+        resume = self._make_resume(owner_id)
+        version = ResumeVersion(
+            id=uuid4(), resume_id=uuid4(), job_id=None, analysis_id=uuid4(),
+            label="x", raw_text="", parsed_data={}, applied_rewrites={},
+        )
+        self._wire_session(resume, None)
+
+        with self.assertRaises(VersionNotFoundError):
+            self.service.export_version_docx(resume.id, version.id, owner_id)
 
 
 if __name__ == "__main__":

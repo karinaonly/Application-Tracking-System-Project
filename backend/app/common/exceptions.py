@@ -16,3 +16,7 @@ class JobNotFoundError(HTTPException):
 class AnalysisNotFoundError(HTTPException):
     def __init__(self):
         super().__init__(status_code=status.HTTP_404_NOT_FOUND, detail="Analysis not found for this resume")
+
+class VersionNotFoundError(HTTPException):
+    def __init__(self):
+        super().__init__(status_code=status.HTTP_404_NOT_FOUND, detail="Resume version not found")

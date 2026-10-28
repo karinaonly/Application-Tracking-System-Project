@@ -43,6 +43,17 @@ export interface ResumeSummary {
     created_at: string
     report?: ResumeAnalysis["report"]
   } | null
+  // D3: tailored versions stored for this resume (absent in older responses)
+  versions?: ResumeVersionSummary[]
+}
+
+// D3: a stored tailored version of a resume for a specific job
+export interface ResumeVersionSummary {
+  id: string
+  job_id: string | null
+  label: string
+  applied_rewrites_count: number
+  created_at: string
 }
 
 export interface ResumeAnalysis {
@@ -200,6 +211,27 @@ export async function exportResume(resumeId: string, analysisId?: string): Promi
   const query = analysisId ? `?analysis_id=${encodeURIComponent(analysisId)}` : ""
   const response = await fetch(`${API_BASE_URL}/resumes/${resumeId}/export${query}`, { headers })
   if (!response.ok) throw new Error("Could not export resume")
+  return response.blob()
+}
+
+// D3: per-job tailored resume versions
+export async function createVersion(resumeId: string, analysisId: string): Promise<ResumeVersionSummary> {
+  return request<ResumeVersionSummary>(`/resumes/${resumeId}/versions`, {
+    method: "POST",
+    body: JSON.stringify({ analysis_id: analysisId }),
+  })
+}
+
+export async function listVersions(resumeId: string): Promise<ResumeVersionSummary[]> {
+  return request<ResumeVersionSummary[]>(`/resumes/${resumeId}/versions`)
+}
+
+export async function exportVersion(resumeId: string, versionId: string): Promise<Blob> {
+  const headers = new Headers()
+  const token = getToken()
+  if (token) headers.set("Authorization", `Bearer ${token}`)
+  const response = await fetch(`${API_BASE_URL}/resumes/${resumeId}/versions/${versionId}/export`, { headers })
+  if (!response.ok) throw new Error("Could not export version")
   return response.blob()
 }
 

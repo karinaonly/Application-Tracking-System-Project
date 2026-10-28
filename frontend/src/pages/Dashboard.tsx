@@ -56,6 +56,7 @@ type RecentFile = {
   kwScore: number | null
   job: string
   analysis: api.ResumeSummary["latest_analysis"]
+  versions: api.ResumeVersionSummary[]
 }
 
 const tips = [
@@ -100,6 +101,7 @@ export default function Dashboard({ navigate, addToast }: PageProps) {
         : null,
       job: resume.latest_analysis?.job_id ? "Saved job description" : "General analysis",
       analysis: resume.latest_analysis,
+      versions: resume.versions ?? [],
     })))).catch(error => addToast("error", error.message))
   }, [addToast])
 
@@ -137,6 +139,23 @@ export default function Dashboard({ navigate, addToast }: PageProps) {
       addToast("success", "ATS-optimized resume downloaded!")
     } catch (error) {
       addToast("error", error instanceof Error ? error.message : "Could not export resume")
+    }
+  }
+
+  // D3: download a stored tailored version
+  const exportVersion = async (f: RecentFile, v: api.ResumeVersionSummary) => {
+    addToast("info", `Generating ${v.label} DOCX…`)
+    try {
+      const blob = await api.exportVersion(f.id, v.id)
+      const link = document.createElement("a")
+      link.href = URL.createObjectURL(blob)
+      const jobWord = v.label.replace(/^Tailored for\s*/, "").replace(/^Tailored$/, "tailored")
+      link.download = `${f.name.replace(/\.[^.]+$/, "")}_${jobWord.replace(/[^\w]+/g, "_")}.docx`
+      link.click()
+      URL.revokeObjectURL(link.href)
+      addToast("success", `${v.label} resume downloaded!`)
+    } catch (error) {
+      addToast("error", error instanceof Error ? error.message : "Could not export version")
     }
   }
 
@@ -226,6 +245,21 @@ export default function Dashboard({ navigate, addToast }: PageProps) {
                           <div>
                             <p className="text-sm font-medium text-navy leading-none">{f.name}</p>
                             <p className="text-xs text-dim mt-0.5">{f.date}</p>
+                            {f.versions.length > 0 && (
+                              <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                                {f.versions.map(v => (
+                                  <button
+                                    key={v.id}
+                                    onClick={() => exportVersion(f, v)}
+                                    className="inline-flex items-center gap-1 text-[10px] text-teal bg-teal/10 hover:bg-teal/20 rounded-full px-2 py-0.5 transition-colors"
+                                    title={`${v.label} — ${v.applied_rewrites_count} rewrites applied. Click to export.`}
+                                  >
+                                    <Download size={9} />
+                                    {v.label} · {v.applied_rewrites_count} rewrites
+                                  </button>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </td>

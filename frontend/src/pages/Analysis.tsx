@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Download, RefreshCw, ChevronDown, ChevronUp, Copy, CheckCircle, XCircle, AlertTriangle, Lightbulb, BarChart2, Target, Edit3, Zap, BookOpen, ArrowLeftRight, Shield } from "lucide-react"
+import { Download, RefreshCw, ChevronDown, ChevronUp, Copy, CheckCircle, XCircle, AlertTriangle, Lightbulb, BarChart2, Target, Edit3, Zap, BookOpen, ArrowLeftRight, Shield, Save } from "lucide-react"
 import type { PageProps } from "../types"
 import * as api from "../api"
 
@@ -212,6 +212,7 @@ function RewriteCard({ item }: { item: AnalysisRewrite }) {
 export default function Analysis({ navigate, addToast }: PageProps) {
   const [passedOpen, setPassedOpen] = useState(false)
   const [exportLoading, setExportLoading] = useState(false)
+  const [saveVersionLoading, setSaveVersionLoading] = useState(false)
   const analysis = api.getLastAnalysis()
   const resumeMeta = api.getLastResumeMeta()
 
@@ -231,6 +232,18 @@ export default function Analysis({ navigate, addToast }: PageProps) {
       addToast("success", "ATS-optimized resume downloaded!")
     } catch (error) { addToast("error", error instanceof Error ? error.message : "Could not export resume") }
     finally { setExportLoading(false) }
+  }
+
+  // D3: store the tailored text as a per-job version (rewrites applied for real).
+  const handleSaveVersion = async () => {
+    const resumeId = api.getLastResumeId()
+    if (!resumeId || !analysis?.id) { addToast("error", "No resume selected"); return }
+    setSaveVersionLoading(true)
+    try {
+      await api.createVersion(resumeId, analysis.id)
+      addToast("success", "Tailored version saved! Export it anytime from the Dashboard.")
+    } catch (error) { addToast("error", error instanceof Error ? error.message : "Could not save version") }
+    finally { setSaveVersionLoading(false) }
   }
 
   const report = analysis?.report
@@ -414,8 +427,18 @@ export default function Analysis({ navigate, addToast }: PageProps) {
                 ))}
               </div>
               <p className="text-xs text-mid bg-off rounded-lg px-3 py-2 mt-4">
-                Scores re-computed with the AI-rewritten bullets in place. ATS compatibility stays the same — it measures formatting, not wording. Export the DOCX to download a resume with these rewrites applied.
+                Scores re-computed with the AI-rewritten bullets in place. ATS compatibility stays the same — it measures formatting, not wording.
               </p>
+              {analysis.job_id && (
+                <button
+                  onClick={handleSaveVersion}
+                  disabled={saveVersionLoading}
+                  className="mt-3 flex items-center gap-2 px-4 py-2 bg-navy text-white text-xs font-semibold rounded-xl hover:bg-navy-light transition-all disabled:opacity-50"
+                >
+                  <Save size={13} />
+                  {saveVersionLoading ? "Saving version…" : "Save as version for this job"}
+                </button>
+              )}
             </div>
           )
         })()}

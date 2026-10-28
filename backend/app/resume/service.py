@@ -1,10 +1,11 @@
 from sqlmodel import Session, select
 from uuid import UUID
+from datetime import datetime, timezone
 from fastapi import UploadFile, HTTPException
 import os
 import re
 
-from app.resume.models import Resume, ResumeAnalysis
+from app.resume.models import Resume, ResumeAnalysis, ResumeVersion
 from app.jobs.models import JobDescription
 from app.parser.text_extractor import TextExtractor
 from app.parser.section_parser import SectionParser
@@ -15,7 +16,7 @@ from app.analyzer.grammar_checker import GrammarChecker
 from app.analyzer.ai_rewriter import AIRewriter
 from app.analyzer.scoring import compute_overall
 from app.export.docx_exporter import DocxExporter
-from app.common.exceptions import AnalysisNotFoundError, JobNotFoundError, ResumeNotFoundError
+from app.common.exceptions import AnalysisNotFoundError, JobNotFoundError, ResumeNotFoundError, VersionNotFoundError
 
 # How many flagged bullets we'll attempt to send for AI rewriting per analysis.
 # AIRewriter.MAX_BULLETS_PER_CALL caps what actually goes in the API request;
@@ -267,3 +268,152 @@ class ResumeService:
             rewritten_bullets=rewritten_bullets,
             target_role=target_role
         )
+
+    # ------------------------------------------------------------------ #
+    # D3: per-job tailored resume versions
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def _applied_rewrites_from_report(cls, report: dict) -> dict[str, str]:
+        """Only rewrites that actually changed a bullet count as applied —
+        withheld or guard-rejected ones are identical to the original and
+        must not be claimed (same rule as the D1 improvement scoring)."""
+        return {
+            orig: opt["ai_output"]
+            for orig, opt in (report.get("ai_rewritten_examples") or {}).items()
+            if isinstance(opt, dict)
+            and opt.get("ai_output")
+            and opt["ai_output"].strip() != orig.strip()
+        }
+
+    @classmethod
+    def _tailored_sections(cls, sections: dict, applied: dict[str, str]) -> dict:
+        """Apply rewrites to every shape a section can take: raw strings
+        ({"experience": {"raw": ...}}) and parsed bullet lists
+        ({"experience_parsed": [{...bullets}]})."""
+        tailored = {**sections}
+        for key in ("experience", "projects"):
+            block = tailored.get(key)
+            if isinstance(block, dict) and block.get("raw"):
+                raw = block["raw"]
+                for orig, repl in applied.items():
+                    raw = cls._replace_bullet_text(raw, orig, repl)
+                tailored[key] = {**block, "raw": raw}
+        for key in ("experience_parsed", "projects_parsed"):
+            entries = tailored.get(key)
+            if isinstance(entries, list):
+                tailored[key] = [
+                    {**entry, "bullets": [applied.get(b, b) for b in entry.get("bullets", [])]}
+                    for entry in entries
+                ]
+        return tailored
+
+    def create_version(self, resume_id: UUID, user_id: UUID, analysis_id: UUID) -> ResumeVersion:
+        resume = self.session.get(Resume, resume_id)
+        if not resume or resume.user_id != user_id:
+            raise ResumeNotFoundError()
+
+        analysis = self.session.get(ResumeAnalysis, analysis_id)
+        if not analysis or analysis.resume_id != resume_id:
+            raise AnalysisNotFoundError()
+
+        applied = self._applied_rewrites_from_report(analysis.report or {})
+        if not applied:
+            # Honesty: a "tailored version" with zero changed bullets would be
+            # an identical copy -- nothing to store.
+            raise HTTPException(
+                status_code=400,
+                detail="No rewrites were applied in this analysis, so there is nothing to save as a version yet.",
+            )
+
+        tailored_text = resume.raw_text
+        for orig, repl in applied.items():
+            tailored_text = self._replace_bullet_text(tailored_text, orig, repl)
+
+        job = self.session.get(JobDescription, analysis.job_id) if analysis.job_id else None
+        label = f"Tailored for {job.title}" if job else "Tailored version"
+
+        # Upsert per (resume, job): re-saving after a better analysis replaces
+        # the previous version for that job instead of piling up duplicates.
+        existing = self.session.exec(
+            select(ResumeVersion).where(
+                ResumeVersion.resume_id == resume_id,
+                ResumeVersion.job_id == analysis.job_id,
+            )
+        ).first()
+
+        if existing:
+            existing.analysis_id = analysis.id
+            existing.label = label
+            existing.raw_text = tailored_text
+            existing.parsed_data = {"sections": self._tailored_sections(resume.parsed_data.get("sections", {}), applied)}
+            existing.applied_rewrites = applied
+            existing.created_at = datetime.now(timezone.utc)
+            self.session.add(existing)
+            self.session.commit()
+            self.session.refresh(existing)
+            return existing
+
+        version = ResumeVersion(
+            resume_id=resume_id,
+            job_id=analysis.job_id,
+            analysis_id=analysis.id,
+            label=label,
+            raw_text=tailored_text,
+            parsed_data={"sections": self._tailored_sections(resume.parsed_data.get("sections", {}), applied)},
+            applied_rewrites=applied,
+        )
+        self.session.add(version)
+        self.session.commit()
+        self.session.refresh(version)
+        return version
+
+    def list_versions(self, resume_id: UUID, user_id: UUID) -> list[ResumeVersion]:
+        resume = self.session.get(Resume, resume_id)
+        if not resume or resume.user_id != user_id:
+            raise ResumeNotFoundError()
+        return self.session.exec(
+            select(ResumeVersion)
+            .where(ResumeVersion.resume_id == resume_id)
+            .order_by(ResumeVersion.created_at.desc())
+        ).all()
+
+    def delete_version(self, resume_id: UUID, version_id: UUID, user_id: UUID) -> None:
+        resume = self.session.get(Resume, resume_id)
+        if not resume or resume.user_id != user_id:
+            raise ResumeNotFoundError()
+        version = self.session.get(ResumeVersion, version_id)
+        if not version or version.resume_id != resume_id:
+            raise VersionNotFoundError()
+        self.session.delete(version)
+        self.session.commit()
+
+    def export_version_docx(self, resume_id: UUID, version_id: UUID, user_id: UUID) -> tuple[bytes, str]:
+        """Export the stored tailored version. Bullets are already rewritten in
+        the stored sections, so no rewrite map is passed to the exporter."""
+        resume = self.session.get(Resume, resume_id)
+        if not resume or resume.user_id != user_id:
+            raise ResumeNotFoundError()
+        version = self.session.get(ResumeVersion, version_id)
+        if not version or version.resume_id != resume_id:
+            raise VersionNotFoundError()
+
+        analysis = self.session.get(ResumeAnalysis, version.analysis_id)
+        missing_keywords = []
+        target_role = ""
+        if analysis and analysis.report:
+            missing_keywords = analysis.report.get("keyword_analysis", {}).get("missing_keywords", [])
+        if version.job_id:
+            job = self.session.get(JobDescription, version.job_id)
+            if job:
+                target_role = job.title
+
+        data = self.exporter.export_tailored(
+            sections=version.parsed_data.get("sections", {}),
+            missing_keywords=missing_keywords,
+            rewritten_bullets={},
+            target_role=target_role,
+        )
+        safe = re.sub(r"[^A-Za-z0-9]+", "_", target_role).strip("_") if target_role else ""
+        filename = f"Resume_Tailored_{safe}.docx" if safe else "ATS_Optimized_Resume.docx"
+        return data, filename
