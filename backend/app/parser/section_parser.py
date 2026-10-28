@@ -46,7 +46,10 @@ class SectionParser:
     )
     GENERIC_URL_RE = re.compile(
         r"(?:https?://[^\s,;]+|www\.[^\s,;]+|"
-        r"(?<!@)\b[\w\-]+\.(?:com|dev|io|net|org|app|me|ai|co|ph)(?:/[^\s,;]*)?)",
+        # F4: \b after the TLD — without it, "carlos.mendoza" matches as the
+        # fake domain "carlos.me" (the "me" TLD eats the first two letters of
+        # the next word), and emails sprouted phantom portfolio fields.
+        r"(?<!@)\b[\w\-]+\.(?:com|dev|io|net|org|app|me|ai|co|ph)\b(?:/[^\s,;]*)?)",
         re.I,
     )
     LABELED_FIELD_RE = re.compile(
@@ -64,6 +67,20 @@ class SectionParser:
         r"^(?P<label>[A-Za-z][A-Za-z\s/&]*?)\s*[:\u2013\u2014]\s*(?P<rest>\S.*)$"
     )
 
+    # F4: involvement-type headers (org names, roles, tutor lines) carry no
+    # resume data the analyzers use — left in place they leak into whatever
+    # section precedes them, usually PROJECTS ("THETA MU SOCIETY" became a
+    # fake project entry). Skipped entirely, like REFERENCES.
+    SKIPPED_HEADER_RE = re.compile(
+        r"(?i)^(?:(?:extracurricular|community|campus|student)\s+)?"
+        r"(?:activities|involvement|organizations?|affiliations?|leadership|volunteer(?:ing)?)"
+        r"(?:\s+(?:and|&)\s+(?:activities|involvement|leadership|organizations?))?$"
+    )
+
+    def _is_skipped_header(self, line: str) -> bool:
+        cleaned = re.sub(r"[:\-_=|#*•]+", "", line).strip()
+        return bool(self.SKIPPED_HEADER_RE.match(cleaned))
+
     def parse(self, raw_text: str) -> dict:
         lines = raw_text.splitlines()
         sections: dict = {}
@@ -71,6 +88,7 @@ class SectionParser:
         current_body: list[str] = []
         sec_order: list[str] = []
         prev_blank = True
+        skipping = False  # F4: set after a skipped header; orphan lines are dropped
 
         for line in lines:
             line_str = line.strip()
@@ -96,16 +114,21 @@ class SectionParser:
                         detected = cand
                         inline_rest = m.group("rest").strip()
 
-            # Skip REFERENCES entirely (ATS best practice)
-            if detected == "references":
+            # Skip REFERENCES and involvement-type headers entirely (ATS best
+            # practice; F4: org/activities content must not leak into other
+            # sections). Lines that follow are dropped until the next real
+            # header instead of polluting the contact block.
+            if detected == "references" or self._is_skipped_header(line_str):
                 if current_sec and current_body:
                     sections[current_sec] = {"raw": "\n".join(current_body).strip()}
                 current_sec = None
                 current_body = []
+                skipping = True
                 prev_blank = False
                 continue
 
             if detected:
+                skipping = False
                 if current_sec:
                     raw = "\n".join(current_body).strip()
                     raw = re.split(r"(?i)\n?\s*REFERENCES?\b.*", raw, maxsplit=1)[0].strip()
@@ -117,6 +140,8 @@ class SectionParser:
             else:
                 if current_sec:
                     current_body.append(line_str)
+                elif skipping:
+                    continue  # F4: orphan line after a skipped header — drop it
                 else:
                     if "contact" not in sections:
                         sections["contact"] = {"raw": ""}
@@ -661,6 +686,19 @@ class SectionParser:
                 continue
 
             if self._is_date_only(line):
+                # F4: a bare date line after a title line belongs to that
+                # entry (mirrors the A15 education fix) — flushing here used
+                # to split every "Title\nDates\n- bullet" project in two,
+                # leaving the first entry dateless and bulletless.
+                if (
+                    current
+                    and current.get("title")
+                    and not current.get("dates")
+                    and not current.get("bullets")
+                    and not current.get("subtitle")
+                ):
+                    current["dates"] = line.strip()
+                    continue
                 flush()
                 current = {
                     "title": "",
@@ -809,6 +847,15 @@ class SectionParser:
             if self._is_label(line):
                 continue
 
+            # F4: "Expected 2026" / "Graduating 2026" is the graduation date of
+            # the entry being built — not the start of a new one (it used to
+            # become a bogus entry with school "Expected").
+            grad = re.match(r"(?i)^(?:expected(?:\s+graduation)?|graduating)\s+((?:19|20)\d{2})", line)
+            if grad:
+                if current and not current["dates"]:
+                    current["dates"] = f"Expected {grad.group(1)}"
+                continue
+
             if self._is_date_only(line):
                 # A15: a bare date line after header lines belongs to them
                 # (degree-first layout) instead of starting a new entry.
@@ -893,6 +940,22 @@ class SectionParser:
                     "degree": "",
                     "details": [],
                 }
+
+            # F4: a left-column label glued to the degree line ("College
+            # Bachelor of Science in Information Technology") hides the degree
+            # behind a school hint — the word "College" made the whole line
+            # classify as school, swapping school and degree. Strip the label
+            # when the remainder is clearly the degree.
+            label_m = re.match(
+                r"(?i)^(?:College|Senior\s*High(?:\s*School)?|University|Institute|Internship|Capstone|Academic)\s+(.+)$",
+                line,
+            )
+            if (
+                label_m
+                and degree_hint.search(label_m.group(1))
+                and not school_hint.search(label_m.group(1))
+            ):
+                line = label_m.group(1)
 
             # classify the line
             if re.match(r"(?i)^senior\s*high", line) or (

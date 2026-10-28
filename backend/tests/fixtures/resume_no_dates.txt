@@ -1,0 +1,23 @@
+ANA LIZA TORRES
+ana.torres@email.com
+github.com/anatorres
+
+PROFILE
+Information technology graduate seeking a junior developer role.
+
+WORK HISTORY
+Junior Web Developer at Zeta Webworks
+- Built WordPress and Laravel sites for small business clients
+- Fixed cross-browser issues in existing themes
+
+Intern at Eta Digital
+- Tested responsive layouts across devices
+- Documented REST endpoints for the frontend team
+
+CORE COMPETENCIES
+HTML, CSS, JavaScript, PHP, Laravel, WordPress, MySQL
+
+EDUCATIONAL BACKGROUND
+B.S. Information Technology
+Pamantasan ng Lungsod ng Maynila
+2020 - 2024

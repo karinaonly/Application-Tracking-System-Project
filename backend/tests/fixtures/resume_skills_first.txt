@@ -1,0 +1,23 @@
+CARLOS MENDOZA
+carlos.mendoza@email.com | +63 928 444 0202
+github.com/carlosmendoza
+
+TECH STACK: Python, Django, PostgreSQL, Docker, AWS, Git
+
+SUMMARY
+Backend developer specializing in data-heavy Django applications.
+
+WORK EXPERIENCE
+Python Developer at Delta Analytics
+Feb 2023 - Present
+- Built ETL pipelines processing 2 million rows daily
+- Containerized legacy services with Docker Compose
+
+Junior Developer at Epsilon Labs
+Jun 2021 - Jan 2023
+- Maintained internal Django admin tools
+
+EDUCATION
+B.S. Computer Engineering
+De La Salle University
+2017 - 2021

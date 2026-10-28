@@ -8,7 +8,7 @@ Backend developer with internship and capstone experience.
 
 WORK EXPERIENCE
 Internship
-Backend Developer Intern at Synchores Information
+Backend Developer Intern at Infotech Solutions
 Jun 2023 - Dec 2023
 - Developed internal CRUD APIs with Django REST Framework
 

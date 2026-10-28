@@ -1,0 +1,28 @@
+JOSHUA SANTOS
+joshua.santos@email.com | +63 906 777 0303
+github.com/joshuasantos
+
+OBJECTIVE
+Computer science student seeking an internship in software development.
+
+PROJECTS
+Library Management System
+Feb 2024 - May 2024
+- Built a Java Swing desktop app used by 50 library staff
+- Designed a normalized MySQL schema with 9 tables
+
+Campus Event Finder
+Sep 2023 - Dec 2023
+- Developed a React Native app listing 120 campus events monthly
+
+LEADERSHIP AND INVOLVEMENT
+Member, Committee on Academics
+- Tutored 15 first-year students in programming fundamentals
+
+SKILLS
+Java, JavaScript, React Native, MySQL, Firebase, Git
+
+EDUCATION
+B.S. Computer Science
+University of Santo Tomas
+Expected 2026

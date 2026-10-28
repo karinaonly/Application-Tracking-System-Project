@@ -1,0 +1,30 @@
+MARIA CLARA REYES
+maria.reyes@email.com | +63 918 555 0101
+linkedin.com/in/maria-clara-reyes
+
+SUMMARY
+Full-stack developer with four years of experience shipping web applications.
+
+PROFESSIONAL EXPERIENCE
+2024 Senior Web Developer at Globex Corporation
+Internship Makati
+486-Hour Internship I Makati City
+- Led migration of a legacy PHP monolith to Laravel and Vue.js
+
+2020 Web Developer at Gamma Softworks
+Part-Time Quezon City
+- Built customer dashboards consumed by 300 daily users
+
+EDUCATION
+College Bachelor of Science in Information Technology
+University of the Philippines
+2020 - 2024
+
+Senior High Senior High School, STEM Strand
+Quezon City Science High School
+2016 - 2019
+
+SKILLS
+Languages: PHP, JavaScript, Python
+Frameworks: Laravel, Vue.js, Django
+Databases: MySQL, PostgreSQL

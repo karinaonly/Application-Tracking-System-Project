@@ -173,7 +173,7 @@ class FixtureTests(unittest.TestCase):
         experience = sections["experience_parsed"]
         self.assertEqual(len(experience), 3)
         self.assertEqual(experience[0]["title"], "Backend Developer Intern")
-        self.assertEqual(experience[0]["company"], "Synchores Information")
+        self.assertEqual(experience[0]["company"], "Infotech Solutions")
 
         education = sections["education_parsed"]
         self.assertTrue(any("University of the Philippines" in e["school"] for e in education))
@@ -255,6 +255,107 @@ class RealResumePatternTests(unittest.TestCase):
         sections = self.parser.parse("EXPERIENCE\nBuilt REST APIs\nSKILLS: Python, React")
         self.assertEqual(sections["_section_order"], ["experience", "skills"])
         self.assertEqual(sections["skills_parsed"], ["Python", "React"])
+
+
+class AnonymizedFixtureTests(unittest.TestCase):
+    """F4: six more anonymized layouts, each targeting a parsing hazard."""
+
+    def setUp(self):
+        self.parser = SectionParser()
+
+    def _parse(self, name):
+        return self.parser.parse(load_fixture(f"{name}.txt"))
+
+    def test_caps_headers_alternate_names_and_em_dash_dates(self):
+        sections = self._parse("resume_caps_headers")
+        order = sections["_section_order"]
+        for expected in ("summary", "experience", "skills", "education", "certifications"):
+            self.assertIn(expected, order)
+        experience = sections["experience_parsed"]
+        self.assertEqual(len(experience), 2)
+        self.assertEqual(experience[0]["title"], "Senior Web Developer")
+        self.assertEqual(experience[0]["company"], "Globex Corporation")
+        self.assertEqual(experience[0]["dates"], "Jan 2022 — Present")
+        self.assertEqual(len(experience[0]["bullets"]), 2)
+        education = sections["education_parsed"]
+        self.assertEqual(education[0]["school"], "Polytechnic University of the Philippines")
+        self.assertEqual(education[0]["degree"], "B.S. Information Technology")
+        skills = sections["skills_parsed"]
+        self.assertIn("Laravel", skills)
+        self.assertFalse(any("TECHNICAL" in s for s in skills))
+
+    def test_skills_first_layout_and_no_phantom_portfolio(self):
+        sections = self._parse("resume_skills_first")
+        # skills detected even though it appears before summary/experience
+        self.assertEqual(sections["_section_order"][:3], ["contact", "skills", "summary"])
+        skills = sections["skills_parsed"]
+        self.assertIn("Python", skills)
+        self.assertIn("Docker", skills)
+        self.assertIn("AWS", skills)
+        # F4 regression: the email once spawned a fake "carlos.me" portfolio
+        self.assertEqual(sections["contact_parsed"]["portfolio"], "")
+        experience = sections["experience_parsed"]
+        self.assertEqual(len(experience), 2)
+        self.assertEqual(experience[0]["company"], "Delta Analytics")
+
+    def test_experience_without_dates_still_parses(self):
+        sections = self._parse("resume_no_dates")
+        experience = sections["experience_parsed"]
+        self.assertEqual(len(experience), 2)
+        self.assertEqual(experience[0]["title"], "Junior Web Developer")
+        self.assertEqual(experience[0]["company"], "Zeta Webworks")
+        self.assertEqual(experience[0]["dates"], "")
+        self.assertEqual(len(experience[0]["bullets"]), 2)
+        self.assertEqual(experience[1]["dates"], "")
+        education = sections["education_parsed"]
+        self.assertEqual(education[0]["school"], "Pamantasan ng Lungsod ng Maynila")
+
+    def test_two_column_artifacts_keep_education_fields_straight(self):
+        sections = self._parse("resume_two_column")
+        education = sections["education_parsed"]
+        # F4 regression: the glued "College" label used to swap school/degree
+        self.assertEqual(education[0]["school"], "University of the Philippines")
+        self.assertEqual(education[0]["degree"], "Bachelor of Science in Information Technology")
+        self.assertEqual(education[0]["dates"], "2020 - 2024")
+        self.assertEqual(education[1]["school"], "Quezon City Science High School")
+        # labeled skill lines under SKILLS stay skills (no LANGUAGES section)
+        self.assertNotIn("languages", sections["_section_order"])
+        skills = sections["skills_parsed"]
+        self.assertIn("PHP", skills)
+        self.assertIn("Laravel", skills)
+        experience = sections["experience_parsed"]
+        self.assertEqual(len(experience), 2)
+        self.assertEqual(experience[0]["title"], "Senior Web Developer")
+
+    def test_student_projects_get_dates_and_involvement_is_skipped(self):
+        sections = self._parse("resume_student_projects")
+        self.assertNotIn("experience", sections["_section_order"])
+        projects = sections["projects_parsed"]
+        # F4 regression: date lines used to split each project in two, and
+        # involvement content used to leak in as fake entries
+        self.assertEqual(len(projects), 2)
+        self.assertEqual(projects[0]["title"], "Library Management System")
+        self.assertEqual(projects[0]["dates"], "Feb 2024 - May 2024")
+        self.assertEqual(len(projects[0]["bullets"]), 2)
+        self.assertEqual(projects[1]["title"], "Campus Event Finder")
+        self.assertEqual(projects[1]["dates"], "Sep 2023 - Dec 2023")
+        self.assertFalse(any("LEADERSHIP" in (e.get("title") or "") for e in projects))
+        education = sections["education_parsed"]
+        self.assertEqual(len(education), 1)
+        self.assertEqual(education[0]["school"], "University of Santo Tomas")
+        # F4 regression: "Expected 2026" used to become a bogus second entry
+        self.assertEqual(education[0]["dates"], "Expected 2026")
+
+    def test_career_changer_to_separator_and_extra_sections(self):
+        sections = self._parse("resume_career_changer")
+        experience = sections["experience_parsed"]
+        self.assertEqual(len(experience), 2)
+        self.assertEqual(experience[0]["title"], "Data Analyst")
+        self.assertEqual(experience[0]["dates"], "2015 to 2020")
+        self.assertIn("certifications", sections["_section_order"])
+        self.assertIn("languages", sections["_section_order"])
+        self.assertIn("Excel", sections["skills_parsed"])
+        self.assertIn("Power BI", sections["skills_parsed"])
 
 
 if __name__ == "__main__":

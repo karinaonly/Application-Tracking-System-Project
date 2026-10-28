@@ -1,0 +1,28 @@
+MARIA CLARA REYES
+Makati City, Metro Manila 1200
+maria.reyes@email.com | +63 918 555 0101
+linkedin.com/in/maria-clara-reyes
+
+PROFESSIONAL SUMMARY
+Full-stack developer with four years of experience shipping web applications.
+
+PROFESSIONAL EXPERIENCE
+Senior Web Developer at Globex Corporation
+Jan 2022 — Present
+• Led migration of a legacy PHP monolith to Laravel and Vue.js
+• Reduced page load times by 40 percent through query optimization
+
+Web Developer at Gamma Softworks
+Mar 2020 — Dec 2021
+• Built customer dashboards consumed by 300 daily users
+
+TECHNICAL SKILLS
+PHP, Laravel, Vue.js, JavaScript, MySQL, Redis, Git
+
+ACADEMIC BACKGROUND
+B.S. Information Technology
+Polytechnic University of the Philippines
+2016 — 2020
+
+CERTIFICATIONS
+• PHP Certification, 2021
