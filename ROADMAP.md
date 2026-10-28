@@ -326,8 +326,9 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   *Fix:* log a clear warning or fail loudly, and document `python -m spacy download en_core_web_sm`.
   ✅ *Done 2026-09-28: Loud warning printed at startup if spaCy model is missing.*
 
-- [ ] **F3 (P1): No README**
+- [x] **F3 (P1): No README**
   Setup steps, `.env` example, how to run backend and frontend.
+  ✅ *Done 2026-10-28: `README.md` at the repo root — what the app does with the honesty principles up front (no faked scores, claim guard, format-based ATS), features, tech stack, project layout, backend setup (`requirements.txt` — newly created with the direct dependencies pinned from the working venv, plus the optional spaCy model command), `.env` keys incl. the required `JWT_SECRET` and how to generate it, frontend setup (`bun install`, `VITE_API_URL`), run commands (uvicorn :8000, Vite :8443 strictPort), test commands, the typical upload → JD → analyze → save-version → export flow, and a pointer to `ROADMAP.md`.*
 
 - [ ] **F4 (P1): No tests**
   Start with parser tests using 5 to 10 anonymized sample resumes as fixture
@@ -404,8 +405,8 @@ Counts verified against the item list on 2026-10-23. (F14 is unused; numbering j
 | C. AI Rewriter | 13 | 10 |
 | D. Features | 8 | 3 |
 | E. Security & Config | 6 | 4 |
-| F. Hygiene | 17 | 9 |
-| **Total** | **77** | **46** |
+| F. Hygiene | 17 | 10 |
+| **Total** | **77** | **47** |
 
 Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrites from Groq, no fallbacks), A13 (a real resume export keeps its tech spellings), E1 (empty `JWT_SECRET` aborts startup), E2 (allowed preflight 200 / foreign origin 400), and E5 (zero SQL-echo lines in the live log). A14's new certifications/languages sections are fixture-tested because the current real resume has neither; A19 is build-verified but still needs a UI click-through to become 🟢. The rest of the C section remains unit-tested only (🟡) until each item is exercised individually.
 
@@ -415,6 +416,7 @@ Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrit
 
 | Date | Item(s) | What changed | Notes |
 |---|---|---|---|
+| 2026-10-28 | F3 | README added at the repo root: honesty principles up front (no faked scores, claim guard, format-based ATS), features, tech stack, project layout, backend setup with a new `requirements.txt` (direct deps pinned from the working venv; spaCy model documented as optional with graceful degradation noted), `.env` keys incl. required `JWT_SECRET` + generation command, frontend setup (`bun install`, `VITE_API_URL`), run/test commands, the typical flow, and a pointer to the roadmap. | Docs only; no code changes. Counts: F 10 → 47 done. |
 | 2026-10-28 | D3 | Per-job tailored resume versions are live: `POST /resumes/{id}/versions` stores a real tailored snapshot from an analysis — only rewrites that actually changed a bullet are applied (same honesty rule as D1) into the raw text and every section shape, one version per (resume, job) with upsert-on-re-save, and a 400 rejection when zero rewrites changed anything (an identical copy is not a tailored version). List / export (job-specific DOCX filename, no double-rewriting since bullets are already tailored) / delete endpoints round it out. Frontend: "Save as version for this job" in the improvement panel and teal version chips on Dashboard cards that download the version directly. | 168 backend tests pass (8 new); `tsc --noEmit` + `bun run build` pass; `resume_versions` table auto-created and verified live. Counts: D 3 → 46 done. |
 | 2026-10-28 | D4 (partial) | URL import no longer fails silently: non-200 fetches (Indeed/LinkedIn bot-blocking — the user hit this live on an Indeed URL that saved as an empty "Scraped Job") and bot-wall pages (HTTP 200 but <100 chars of real text) now raise a clear error → 400 → UI toast telling the user to paste the JD manually. Junk "Scraped Job" rows can no longer be created; the 3 existing junk rows were deleted (23 jobs remain). Remaining for D4: extract the real company from meta/JSON-LD instead of the "Extracted from web" placeholder. | 161 backend tests pass (4 new mocked-HTTP tests in `tests/test_scraper.py`). No counts change (item stays open). |
 | 2026-10-28 | D2 | Real JD parser is live: a deterministic `jobs/parser.py` (same taxonomy as the keyword engine) runs on both job-save paths and fills the previously-dead `extracted_keywords` column — required/preferred/other skills bucketed by section headers (anchored short-header detection; inline `Requirements: …` colons keep their content; Benefits/About-us headers reset the bucket), curated tools list (incl. cloud/DBs), seniority (title-first, body fallback restricted to intern/junior/mid/senior so "mentions a manager" isn't "is a manager"), and min years of experience. `JobResponse` exposes it; the Jobs page shows a seniority badge + required-skill chips; all 25 stored jobs backfilled in place. Notable catches while testing: "…is a plus" content lines were being mistaken for section headers, and cloud providers were missing from the tools list. Future: keyword scoring can weight required > preferred (noted in the roadmap item). | 157 backend tests pass (9 new in `tests/test_job_parser.py`); `tsc --noEmit` + `bun run build` pass. Counts: D 2 → 45 done. |
