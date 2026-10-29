@@ -3,6 +3,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from uuid import uuid4
 
 from alembic import command
 from alembic.autogenerate import compare_metadata
@@ -12,7 +13,7 @@ from sqlalchemy import create_engine, inspect
 from sqlmodel import Session, SQLModel, select
 
 from app.auth.models import User
-from app.config.database import alembic_config, init_db
+from app.config.database import BASELINE_REVISION, alembic_config, init_db
 
 
 class MigrationTests(unittest.TestCase):
@@ -47,7 +48,8 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(self._version(), self._head())
 
     def test_existing_database_is_adopted_without_data_loss(self):
-        SQLModel.metadata.create_all(self.engine)
+        # Simulate a pre-Alembic database: baseline schema, data, no version row.
+        command.upgrade(alembic_config(self.url), BASELINE_REVISION)
         with Session(self.engine) as session:
             session.add(
                 User(
@@ -57,12 +59,40 @@ class MigrationTests(unittest.TestCase):
                 )
             )
             session.commit()
+        with self.engine.begin() as connection:
+            connection.exec_driver_sql("DROP TABLE alembic_version")
 
         init_db(self.url)
 
         with Session(self.engine) as session:
             users = session.exec(select(User)).all()
         self.assertEqual([user.email for user in users], ["keep@example.com"])
+        self.assertEqual(self._version(), self._head())
+
+    def test_upgrade_from_baseline_backfills_tracker_defaults(self):
+        command.upgrade(alembic_config(self.url), BASELINE_REVISION)
+        user_id = uuid4()
+        job_id = uuid4()
+        with self.engine.begin() as connection:
+            connection.exec_driver_sql(
+                "INSERT INTO users (id, email, hashed_password, full_name, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (user_id.hex, "legacy@example.com", "hashed", "Legacy", "2026-10-01 00:00:00"),
+            )
+            connection.exec_driver_sql(
+                "INSERT INTO job_descriptions "
+                "(id, user_id, title, company, raw_text, url, extracted_keywords, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (job_id.hex, user_id.hex, "Legacy Job", None, "Build APIs.", None, "{}", "2026-10-01 00:00:00"),
+            )
+
+        init_db(self.url)
+
+        with self.engine.connect() as connection:
+            row = connection.exec_driver_sql(
+                "SELECT application_status, notes, applied_at FROM job_descriptions"
+            ).one()
+        self.assertEqual(row, ("saved", "", None))
         self.assertEqual(self._version(), self._head())
 
     def test_init_db_is_idempotent(self):

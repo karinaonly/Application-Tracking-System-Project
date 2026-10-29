@@ -7,8 +7,9 @@ from app.auth.dependencies import get_current_user
 from app.auth.models import User
 from app.jobs.models import JobDescription
 from app.jobs.parser import JobParser
-from app.jobs.schemas import JobCreate, JobFromUrl, JobResponse
+from app.jobs.schemas import JobApplicationUpdate, JobCreate, JobFromUrl, JobResponse
 from app.jobs.scraper import scrape_job_url
+from app.jobs.tracker import UNSET, update_application
 
 router = APIRouter()
 job_parser = JobParser()
@@ -52,3 +53,28 @@ async def create_from_url(data: JobFromUrl, user: User = Depends(get_current_use
 @router.get("/", response_model=list[JobResponse])
 def list_jobs(user: User = Depends(get_current_user), session: Session = Depends(get_session)):
     return session.exec(select(JobDescription).where(JobDescription.user_id == user.id)).all()
+
+@router.patch("/{job_id}/application", response_model=JobResponse)
+def update_job_application(
+    job_id: UUID,
+    data: JobApplicationUpdate,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    job = session.get(JobDescription, job_id)
+    if not job or job.user_id != user.id:
+        # Same 404 for unknown and foreign jobs -- do not leak existence.
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Omitted applied_at means "leave the date alone"; an explicit null clears it.
+    applied_at = data.applied_at if "applied_at" in data.model_fields_set else UNSET
+    update_application(
+        job,
+        status=data.status,
+        applied_at=applied_at,
+        notes=data.notes,
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    return job

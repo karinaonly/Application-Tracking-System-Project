@@ -28,9 +28,12 @@ export default function UploadPage({ navigate, addToast }: PageProps) {
   const [analyzing, setAnalyzing] = useState(false)
   const [jobs, setJobs] = useState<api.JobDescription[]>([])
   const [resumes, setResumes] = useState<api.ResumeSummary[]>([])
-  const [selectedJobId, setSelectedJobId] = useState<string>()
+  // D7: "Use for Analysis" on the Jobs page preselects that job.
+  const [selectedJobId, setSelectedJobId] = useState<string | undefined>(() => api.getSelectedJobId() ?? undefined)
   const inputRef = useRef<HTMLInputElement>(null)
-  const activeJobId = selectedJobId ?? jobs[0]?.id
+  const activeJobId = selectedJobId && jobs.some(job => job.id === selectedJobId)
+    ? selectedJobId
+    : jobs[0]?.id
   // E4: resume text is only sent to the AI provider when the user leaves this
   // on AND the server allows it. Everything else runs locally either way.
   const [aiEnabled, setAiEnabled] = useState(api.getAiRewritingPreference)

@@ -31,6 +31,9 @@ plus AI rewrites that are stored, auditable, and never invent experience you don
   sites that block bots fail loudly with a "paste manually" message instead of saving
   junk). A deterministic parser extracts required/preferred skills, tools, seniority,
   and min years of experience on save.
+- **Application tracker** — one status per saved job (saved → applied → interview →
+  offer / rejected), an optional real applied date, and private notes. Filter by status;
+  dates are never invented, and tracker notes never reach the AI provider.
 - **Auth** — JWT-based accounts; everything you store is scoped to your user.
   Login is rate-limited, and sign-ups can be closed on a local instance.
 - **Privacy controls** — AI rewriting is opt-in per browser (and can be disabled
@@ -60,9 +63,9 @@ backend/
     parser/        # text extraction + section parsing
     common/        # shared skills taxonomy, exceptions
     config/        # settings, database, Alembic runner
-  migrations/      # versioned schema migrations (baseline + future changes)
+  migrations/      # versioned schema migrations (baseline + tracker)
   alembic.ini
-  tests/           # 354 unittest tests
+  tests/           # 370 unittest tests
 frontend/
   src/
     pages/         # Landing, Auth, Dashboard, Upload, Analysis, JobDescriptions, Settings
@@ -143,7 +146,7 @@ bun run dev -- --port 8443 --strictPort
 ## Tests
 
 ```powershell
-# backend (from backend/) — 354 tests
+# backend (from backend/) — 370 tests
 $env:PYTHONUTF8="1"; .\venv\Scripts\python.exe -m unittest discover -s tests -t .
 
 # frontend — type-check + production build
@@ -159,8 +162,10 @@ bun run build
    provenance, and a projected after-tailoring score.
 4. **Save as version** → the tailored text is stored per job; export it from the
    Dashboard as a DOCX or PDF whenever you need it.
+5. **Track the application** → set saved/applied/interview/offer/rejected, record the
+   real applied date, and keep private notes on the Jobs page.
 
 ## Status
 
-See `ROADMAP.md` for the full prioritized backlog (73/77 done at last count) with a
+See `ROADMAP.md` for the full prioritized backlog (74/77 done at last count) with a
 change log of every batch, what the tests caught, and what remains.

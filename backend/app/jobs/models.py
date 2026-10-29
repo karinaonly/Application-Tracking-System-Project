@@ -11,4 +11,10 @@ class JobDescription(SQLModel, table=True):
     raw_text: str
     url: str | None = Field(default=None)
     extracted_keywords: dict = Field(default={}, sa_column=Column(JSON))
+    # D7: lightweight application tracker. One status per saved job; no
+    # fabricated dates -- applied_at is set only when the user says so (or
+    # automatically at the moment they mark it applied).
+    application_status: str = Field(default="saved", index=True)
+    applied_at: datetime | None = Field(default=None)
+    notes: str = Field(default="")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

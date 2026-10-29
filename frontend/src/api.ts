@@ -18,6 +18,9 @@ export interface ExtractedKeywords {
   min_years_experience: number | null
 }
 
+// D7: one status per saved job. Dates and notes are optional and never guessed.
+export type ApplicationStatus = "saved" | "applied" | "interview" | "offer" | "rejected"
+
 export interface JobDescription {
   id: string
   title: string
@@ -25,7 +28,17 @@ export interface JobDescription {
   raw_text: string
   url: string | null
   extracted_keywords?: ExtractedKeywords
+  application_status?: ApplicationStatus
+  applied_at?: string | null
+  notes?: string
   created_at: string
+}
+
+export interface JobApplicationUpdate {
+  status?: ApplicationStatus
+  // null clears the date; omitting the field leaves it untouched.
+  applied_at?: string | null
+  notes?: string
 }
 
 export interface ResumeSummary {
@@ -238,6 +251,18 @@ export async function createJob(data: { title: string; company?: string; raw_tex
 
 export async function scrapeJob(url: string): Promise<JobDescription> {
   return request<JobDescription>("/jobs/from-url", { method: "POST", body: JSON.stringify({ url }) })
+}
+
+export async function updateJobApplication(jobId: string, data: JobApplicationUpdate): Promise<JobDescription> {
+  return request<JobDescription>(`/jobs/${jobId}/application`, { method: "PATCH", body: JSON.stringify(data) })
+}
+
+export function saveSelectedJobId(id: string): void {
+  sessionStorage.setItem("ats_selected_job_id", id)
+}
+
+export function getSelectedJobId(): string | null {
+  return sessionStorage.getItem("ats_selected_job_id")
 }
 
 export async function listResumes(): Promise<ResumeSummary[]> {
