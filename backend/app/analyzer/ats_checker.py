@@ -4,6 +4,7 @@ import re
 _CONTACT_LINE_RE = re.compile(r"@|(?:https?://|www\.)|(?<!\w)\+?\d[\d\s().-]{5,}\d(?!\w)", re.I)
 _NON_I_PRONOUN_RE = re.compile(r"\b(?:me|my|mine|myself)\b", re.I)
 _I_PRONOUN_RE = re.compile(r"\bI(?:'m|'ve|'ll|'d)\b|(?<![A-Za-z0-9_])I(?=\s+[a-z][a-z'-]*\b)")
+_SAFE_FILENAME_RE = re.compile(r"[A-Za-z0-9._-]+")
 
 
 class ATSCompatibilityChecker:
@@ -26,7 +27,7 @@ class ATSCompatibilityChecker:
 
         return count, examples
 
-    def check(self, raw_text: str, sections: dict, metadata: dict) -> dict:
+    def check(self, raw_text: str, sections: dict, metadata: dict, filename: str = "") -> dict:
         issues = []
         passed = []
 
@@ -57,6 +58,65 @@ class ATSCompatibilityChecker:
                 issues.append({"category": "warning", "issue": f"Missing section: '{req.title()}'", "fix": f"Include a standard '{req.title()}' section."})
             else:
                 passed.append(f"'{req.title()}' section detected")
+
+        # B9: layout checks that used to be DOCX-only or absent.
+        image_count = metadata.get("image_count") or (1 if metadata.get("has_images") else 0)
+        if image_count:
+            issues.append({
+                "category": "warning",
+                "issue": f"Images/icons detected ({image_count})",
+                "fix": "Keep contact details, skills, and dates as real text — ATS cannot read text inside images.",
+            })
+        else:
+            passed.append("No images/icons detected")
+
+        if metadata.get("has_multi_column"):
+            issues.append({
+                "category": "critical",
+                "issue": "Multi-column layout detected",
+                "fix": "Use a single-column layout so ATS reads sections in the intended order.",
+            })
+        else:
+            passed.append("Single-column layout")
+
+        if metadata.get("has_icon_font"):
+            issues.append({
+                "category": "warning",
+                "issue": "Icon font detected",
+                "fix": "Replace icon fonts with plain text labels (email, phone, location).",
+            })
+        elif (metadata.get("font_count") or 0) > 2:
+            issues.append({
+                "category": "warning",
+                "issue": f"Multiple fonts detected ({metadata['font_count']})",
+                "fix": "Use one or two standard fonts such as Calibri or Arial.",
+            })
+        else:
+            passed.append("Standard font usage")
+
+        # B9: dates are how ATS and recruiters judge tenure.
+        experience = sections.get("experience_parsed", []) or []
+        undated = [entry for entry in experience if not str(entry.get("dates") or "").strip()]
+        if undated:
+            noun = "entry" if len(undated) == 1 else "entries"
+            issues.append({
+                "category": "warning",
+                "issue": f"{len(undated)} experience {noun} missing dates",
+                "fix": "Add start/end dates (e.g. Jan 2024 – Present) to every role.",
+            })
+        elif experience:
+            passed.append("Experience dates present")
+
+        # B9: file naming. Only checked when the caller supplies the name.
+        if filename:
+            if _SAFE_FILENAME_RE.fullmatch(filename):
+                passed.append("ATS-friendly file name")
+            else:
+                issues.append({
+                    "category": "warning",
+                    "issue": "File name uses spaces or special characters",
+                    "fix": "Rename with letters, numbers, hyphens or underscores (e.g. jane-doe-resume.pdf).",
+                })
 
         # Pronouns
         pronouns, pronoun_examples = self._pronoun_matches(raw_text, sections)

@@ -500,6 +500,14 @@ export default function Analysis({ navigate, addToast }: PageProps) {
     !bulletAvailable && `Bullet Impact (${report?.bullet_analysis?.warning ?? "unavailable"})`,
   ].filter(Boolean) as string[]
   const overall = analysis.overall_score
+  // B10: show the weights the backend actually used, so the overall score is
+  // explainable and unavailable components are visibly excluded.
+  const weightsUsed = report?.weights_used ?? {}
+  const weightLabels: Record<string, string> = { ats: "ATS", keywords: "Keywords", bullets: "Bullets", grammar: "Grammar" }
+  const weightsLine = Object.entries(weightsUsed)
+    .filter(([key]) => weightLabels[key])
+    .map(([key, weight]) => `${weightLabels[key]} ${Math.round(weight * 100)}%`)
+    .join(" · ")
   const verdict = overall >= 75 ? "ATS-Ready!" : overall >= 50 ? "Almost there!" : "Needs significant work"
   const verdictColor = overall >= 75 ? "#00C9A7" : overall >= 50 ? "#D97706" : "#FF4757"
   // D1: projected after-tailoring scores (absent when no rewrite changed a bullet)
@@ -552,6 +560,7 @@ export default function Analysis({ navigate, addToast }: PageProps) {
                   { label: "ATS Compatibility", val: analysis?.ats_score ?? null, color: "#FFB800" },
                   { label: "Keyword Match",     val: kwAvailable ? (analysis?.keyword_score ?? null) : null, color: "#FF4757" },
                   { label: "Bullet Impact",     val: bulletAvailable ? (analysis?.bullet_score ?? null) : null, color: "#00C9A7" },
+                  { label: "Grammar & Spelling", val: report?.grammar?.score ?? null, color: "#8B5CF6" },
                 ] as { label: string; val: number | null; color: string }[]).map(s => (
                   <div key={s.label}>
                     <div className="flex items-center justify-between mb-1.5">
@@ -563,6 +572,11 @@ export default function Analysis({ navigate, addToast }: PageProps) {
                 ))}
               </div>
             </div>
+            {weightsLine && (
+              <p className="text-xs text-mid bg-off rounded-lg px-3 py-2">
+                Overall weighting: {weightsLine}.
+              </p>
+            )}
             {excludedNote.length > 0 && (
               <p className="text-xs text-mid bg-off rounded-lg px-3 py-2">
                 Not included in the overall score: {excludedNote.join("; ")}. The remaining scores were re-weighted.

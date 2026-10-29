@@ -157,7 +157,11 @@ class ResumeService:
         sections = resume.parsed_data.get("sections", {})
         meta = resume.parsed_data.get("metadata", {})
 
-        ats_res = self.ats_checker.check(resume.raw_text, sections, meta)
+        # B9: the stored filename lets the checker flag ATS-hostile names
+        # (spaces, special characters) without re-reading the upload.
+        ats_res = self.ats_checker.check(
+            resume.raw_text, sections, meta, filename=resume.filename
+        )
         bullet_entries = [
             {**entry, "_section": "Experience"}
             for entry in sections.get("experience_parsed", [])
@@ -195,10 +199,14 @@ class ResumeService:
                 preferred_skills=job_keywords.get("preferred_skills"),
             )
 
+        # B10: grammar is now part of the overall score (it was computed but
+        # discarded). Unavailable components (no job => no keywords) are
+        # dropped and the remaining weights are rescaled.
         overall, weights_used = compute_overall({
             "ats": ats_res["score"],
             "bullets": bullet_res["score"],
             "keywords": kw_res["score"],
+            "grammar": grammar_res["score"],
         })
 
         # AI rewrite for weak/metric-less bullets, batched into ONE API call instead of
@@ -218,7 +226,8 @@ class ResumeService:
         # text (only rewrites that actually changed a bullet) so the report can
         # show the projected improvement honestly.
         improvement = self._score_improvement(
-            resume, bullet_entries, bullet_res, kw_res, ats_res, overall, rewritten, job_obj
+            resume, bullet_entries, bullet_res, kw_res, ats_res, grammar_res,
+            overall, rewritten, job_obj,
         )
 
         analysis = ResumeAnalysis(
@@ -259,6 +268,7 @@ class ResumeService:
         before_bullets: dict,
         before_keywords: dict,
         ats_res: dict,
+        grammar_res: dict,
         before_overall: float,
         rewritten: dict,
         job_obj: JobDescription | None,
@@ -303,12 +313,15 @@ class ResumeService:
                 preferred_skills=(job_obj.extracted_keywords or {}).get("preferred_skills"),
             )
 
-        # ATS compatibility is format-based: bullet rewrites don't change it, so
-        # it carries over unchanged rather than being faked as improved.
+        # ATS compatibility and grammar are text/format-based: bullet rewrites
+        # don't change them, so they carry over unchanged rather than being
+        # faked as improved. Including them keeps the before/after overall
+        # scores on the same B10 weighting.
         after_overall, _ = compute_overall({
             "ats": ats_res["score"],
             "bullets": after_bullets.get("score"),
             "keywords": (after_keywords or {}).get("score"),
+            "grammar": grammar_res.get("score"),
         })
 
         return {
@@ -318,11 +331,13 @@ class ResumeService:
                 "overall": before_overall,
                 "bullets": before_bullets.get("score"),
                 "keywords": before_keywords.get("score"),
+                "grammar": grammar_res.get("score"),
             },
             "after": {
                 "overall": after_overall,
                 "bullets": after_bullets.get("score"),
                 "keywords": (after_keywords or {}).get("score"),
+                "grammar": grammar_res.get("score"),
             },
         }
 

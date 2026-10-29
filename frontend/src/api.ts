@@ -112,7 +112,7 @@ export interface ResumeAnalysis {
     // C6: the user's review of each AI rewrite. Only "accepted" entries are
     // applied to the export; a fresh analysis has none.
     rewrite_decisions?: Record<string, { action: "accepted" | "rejected"; text?: string }>
-    grammar?: { typos_found?: Array<{ word: string; suggestion: string }> }
+    grammar?: { score?: number; typos_found?: Array<{ word: string; suggestion: string }> }
     ai_rewritten_examples?: Record<string, string | { moderate?: string; aggressive?: string; ai_output?: string; source?: string; error?: string; guard?: { status: string; reasons: string[]; retried: boolean; rejected_variants?: string[] } }>
     overall_score?: number
     weights_used?: Record<string, number>
@@ -121,8 +121,8 @@ export interface ResumeAnalysis {
     improvement?: {
       applied_rewrites: number
       flagged_bullets: number
-      before: { overall: number; bullets: number | null; keywords: number | null }
-      after: { overall: number; bullets: number | null; keywords: number | null }
+      before: { overall: number; bullets: number | null; keywords: number | null; grammar?: number | null }
+      after: { overall: number; bullets: number | null; keywords: number | null; grammar?: number | null }
     }
   }
   created_at: string
