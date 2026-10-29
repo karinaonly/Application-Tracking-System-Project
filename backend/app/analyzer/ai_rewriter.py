@@ -296,6 +296,42 @@ class AIRewriter:
             lines.append(f"{i}. {b}")
         return "\n".join(lines)
 
+    def generate_text(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float = 0.5,
+        max_tokens: int = 900,
+    ) -> tuple[str | None, str | None]:
+        """Generate plain text (D8: cover letters) with the shared client.
+
+        Returns ``(text, error)``. The error is already redacted of the API key.
+        """
+        if not self.client:
+            return None, "AI provider is not configured"
+
+        try:
+            res = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            content = (res.choices[0].message.content or "").strip()
+            if not content:
+                return None, "empty response from model"
+            return content, None
+        except Exception as e:
+            error = self._safe_error(e)
+            logger.warning(
+                "AI text generation failed (%s/%s): %s", self.provider, self.model, error
+            )
+            return None, error
+
     # ------------------------------------------------------------------ #
     # Response parsing
     # ------------------------------------------------------------------ #

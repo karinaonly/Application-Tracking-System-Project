@@ -64,6 +64,11 @@ def clear_shared_components() -> None:
     _shared_components.cache_clear()
 
 
+def shared_ai_rewriter() -> AIRewriter:
+    """The process-wide AI client, shared by analysis and cover letters."""
+    return _shared_components()["ai"]
+
+
 class ResumeService:
     def __init__(self, session: Session):
         self.session = session

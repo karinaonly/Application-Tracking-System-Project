@@ -257,6 +257,58 @@ export async function updateJobApplication(jobId: string, data: JobApplicationUp
   return request<JobDescription>(`/jobs/${jobId}/application`, { method: "PATCH", body: JSON.stringify(data) })
 }
 
+// D8: cover letters. The preview endpoint never calls the AI provider -- it
+// returns exactly which resume facts would be sent.
+export type CoverLetterTone = "professional" | "enthusiastic" | "concise"
+
+export interface CoverLetterSource {
+  candidate: { name: string; headline: string; summary: string }
+  experience: Array<{ title: string; company: string; dates: string; bullets: string[] }>
+  skills: string[]
+  job: {
+    title: string
+    company: string
+    required_skills: string[]
+    preferred_skills: string[]
+    description_excerpt: string
+  }
+  limits: { experience_bullets: number; skills: number; job_description_chars: number }
+}
+
+export interface CoverLetterPreview {
+  resume_id: string
+  job_id: string
+  available: boolean
+  reason: "ready" | "disabled_by_server" | "not_configured"
+  provider: string | null
+  model: string | null
+  source: CoverLetterSource
+}
+
+export interface CoverLetterResult {
+  text: string
+  word_count: number
+  tone: CoverLetterTone
+  provider: string | null
+  model: string | null
+  source: CoverLetterSource
+  guard: { status: "passed" | "flagged"; reasons: string[]; retried: boolean }
+  generated_at: string
+}
+
+export async function getCoverLetterPreview(resumeId: string, jobId: string): Promise<CoverLetterPreview> {
+  const params = new URLSearchParams({ resume_id: resumeId, job_id: jobId })
+  return request<CoverLetterPreview>(`/cover-letters/preview?${params.toString()}`)
+}
+
+export async function generateCoverLetter(data: {
+  resume_id: string
+  job_id: string
+  tone: CoverLetterTone
+}): Promise<CoverLetterResult> {
+  return request<CoverLetterResult>("/cover-letters/", { method: "POST", body: JSON.stringify(data) })
+}
+
 export function saveSelectedJobId(id: string): void {
   sessionStorage.setItem("ats_selected_job_id", id)
 }

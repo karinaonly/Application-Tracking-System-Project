@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { Download, RefreshCw, ChevronDown, ChevronUp, Copy, CheckCircle, Check, XCircle, AlertTriangle, Lightbulb, BarChart2, Target, Edit3, Zap, BookOpen, ArrowLeftRight, Shield, Save, Info, X, FileText } from "lucide-react"
 import type { PageProps } from "../types"
 import * as api from "../api"
+import CoverLetterCard from "../components/CoverLetterCard"
 
 /* ─── Score Gauge ─────────────────────────────────────────── */
 function ScoreGauge({ score, size = 160 }: { score: number; size?: number }) {
@@ -984,6 +985,11 @@ export default function Analysis({ navigate, addToast }: PageProps) {
             <p className="text-xs text-dim mt-4">Grammar check is tech-term aware — words like "microservices", "Kubernetes", and API names are not flagged as errors.</p>
           </div>
         </div>
+
+        {/* D8: cover letter -- only when this analysis is tied to a saved job */}
+        {resumeId && analysis.job_id && (
+          <CoverLetterCard resumeId={resumeId} jobId={analysis.job_id} addToast={addToast} />
+        )}
       </div>
 
       {/* D6: original vs. tailored comparison modal */}

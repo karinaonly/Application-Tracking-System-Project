@@ -7,6 +7,7 @@ from app.config.settings import get_settings, validate_security_settings
 from app.auth.router import router as auth_router
 from app.resume.router import router as resume_router
 from app.jobs.router import router as jobs_router
+from app.cover_letter.router import router as cover_letter_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -37,6 +38,7 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/auth", tags=["Auth"])
 app.include_router(resume_router, prefix="/resumes", tags=["Resumes"])
 app.include_router(jobs_router, prefix="/jobs", tags=["Jobs"])
+app.include_router(cover_letter_router, prefix="/cover-letters", tags=["Cover Letters"])
 
 @app.get("/")
 def root():
