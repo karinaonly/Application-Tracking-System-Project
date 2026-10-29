@@ -97,5 +97,90 @@ class ScrapeFailureTests(unittest.TestCase):
         self.assertIn("redirect", str(ctx.exception))
 
 
+class CompanyExtractionTests(unittest.TestCase):
+    """D4: company/title come from the page's JobPosting schema, never invented."""
+
+    URL = "https://8.8.8.8/job"
+
+    def _run(self, html):
+        with patch("app.jobs.scraper.httpx.AsyncClient", lambda **kw: _FakeClient([
+            _FakeResponse(status_code=200, text=html)
+        ])):
+            return asyncio.run(scrape_job_url(self.URL))
+
+    def _body(self):
+        return (
+            "<p>We are looking for a backend developer with strong Python, "
+            "PostgreSQL, and REST API experience.</p>"
+            "<p>You will design services, review code, and work with the platform team.</p>"
+        )
+
+    def test_json_ld_hiring_organization_is_used(self):
+        html = (
+            "<html><head><script type=\"application/ld+json\">"
+            '{"@context":"https://schema.org","@type":"JobPosting",'
+            '"title":"Backend Developer",'
+            '"hiringOrganization":{"@type":"Organization","name":"Acme Labs"}}'
+            f"</script></head><body><h1>Backend Developer</h1>{self._body()}</body></html>"
+        )
+        out = self._run(html)
+        self.assertEqual(out["company"], "Acme Labs")
+        self.assertEqual(out["title"], "Backend Developer")
+
+    def test_json_ld_graph_and_string_organization(self):
+        html = (
+            "<html><head><script type=\"application/ld+json\">"
+            '{"@context":"https://schema.org","@graph":['
+            '{"@type":"WebPage"},'
+            '{"@type":["JobPosting"],"hiringOrganization":"Acme Labs"}]}'
+            f"</script></head><body><h1>Backend Developer</h1>{self._body()}</body></html>"
+        )
+        out = self._run(html)
+        self.assertEqual(out["company"], "Acme Labs")
+
+    def test_missing_json_ld_leaves_company_empty(self):
+        html = f"<html><body><h1>Backend Developer</h1>{self._body()}</body></html>"
+        out = self._run(html)
+        self.assertEqual(out["company"], "")
+        self.assertNotEqual(out["company"], "Extracted from web")
+
+    def test_invalid_json_ld_is_ignored(self):
+        html = (
+            "<html><head><script type=\"application/ld+json\">{not json</script></head>"
+            f"<body><h1>Backend Developer</h1>{self._body()}</body></html>"
+        )
+        out = self._run(html)
+        self.assertEqual(out["company"], "")
+        self.assertEqual(out["title"], "Backend Developer")
+
+    def test_h1_inside_header_is_still_found(self):
+        html = (
+            "<html><body><header><h1>Backend Developer</h1></header>"
+            f"{self._body()}</body></html>"
+        )
+        out = self._run(html)
+        self.assertEqual(out["title"], "Backend Developer")
+
+    def test_json_ld_title_is_the_fallback_without_h1(self):
+        html = (
+            "<html><head><script type=\"application/ld+json\">"
+            '{"@type":"JobPosting","title":"Platform Engineer",'
+            '"hiringOrganization":{"name":"Acme Labs"}}'
+            f"</script></head><body>{self._body()}</body></html>"
+        )
+        out = self._run(html)
+        self.assertEqual(out["title"], "Platform Engineer")
+
+    def test_json_ld_script_is_not_part_of_the_job_text(self):
+        html = (
+            "<html><head><script type=\"application/ld+json\">"
+            '{"@type":"JobPosting","hiringOrganization":{"name":"Acme Labs"}}'
+            f"</script></head><body><h1>Backend Developer</h1>{self._body()}</body></html>"
+        )
+        out = self._run(html)
+        self.assertNotIn("application/ld+json", out["text"])
+        self.assertNotIn("Acme Labs", out["text"])
+
+
 if __name__ == "__main__":
     unittest.main()
