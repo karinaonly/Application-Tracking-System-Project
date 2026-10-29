@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Download, RefreshCw, ChevronDown, ChevronUp, Copy, CheckCircle, Check, XCircle, AlertTriangle, Lightbulb, BarChart2, Target, Edit3, Zap, BookOpen, ArrowLeftRight, Shield, Save, Info } from "lucide-react"
 import type { PageProps } from "../types"
 import * as api from "../api"
@@ -160,8 +160,24 @@ function BulletCard({ bullet }: { bullet: AnalysisBullet }) {
 }
 
 /* ─── AI Rewrite card ────────────────────────────────────── */
-function RewriteCard({ item }: { item: AnalysisRewrite }) {
+type RewriteDecision = { action: "accepted" | "rejected"; text?: string }
+
+function RewriteCard({
+  item,
+  decision,
+  saving,
+  onDecide,
+}: {
+  item: AnalysisRewrite
+  decision?: RewriteDecision
+  saving: boolean
+  onDecide: (action: "accepted" | "rejected" | "pending", text?: string) => void
+}) {
   const [copied, setCopied] = useState<string | null>(null)
+  const [draft, setDraft] = useState(decision?.action === "accepted" ? decision.text ?? "" : "")
+  useEffect(() => {
+    setDraft(decision?.action === "accepted" ? decision.text ?? "" : "")
+  }, [decision?.action, decision?.text])
   const copy = (text: string, key: string) => { navigator.clipboard.writeText(text); setCopied(key); setTimeout(() => setCopied(null), 1800) }
   const rejectedVariants = item.guard?.rejected_variants
   const guardRejected = item.guard?.status === "rejected" || rejectedVariants?.length === 2
@@ -169,6 +185,10 @@ function RewriteCard({ item }: { item: AnalysisRewrite }) {
   const retryFailed = item.guard?.status === "retry_failed"
   const note = "AI suggestion not shown: it added details that aren't in your original bullet."
   const retryNote = "Some AI suggestions are hidden: the first draft added details that aren't in your original bullet, and the second attempt didn't complete. Re-analyze to try again."
+  const accepted = decision?.action === "accepted"
+  const rejected = decision?.action === "rejected"
+  const placeholder = /\[[^\]]{1,30}\]/.exec(draft)?.[0]
+  const dirty = accepted && draft.trim() !== (decision?.text ?? "").trim()
   return (
     <div className="bg-surface rounded-2xl border border-edge overflow-hidden">
       <div className="px-5 py-3.5 border-b border-edge bg-off">
@@ -176,33 +196,99 @@ function RewriteCard({ item }: { item: AnalysisRewrite }) {
         <p className="text-sm text-mid leading-relaxed mt-1 italic">"{item.original}"</p>
       </div>
       <div className="p-5 space-y-4">
-        {guardRejected
-          ? <p className="text-sm text-dim italic">{note}</p>
-          : [
-          { key: "moderate", label: "Moderate Rewrite", sublabel: "Clearer, stronger", text: item.moderate, color: "#00C9A7" },
-          { key: "aggressive", label: "Aggressive Rewrite", sublabel: "Maximum impact", text: item.aggressive, color: "#8B5CF6" },
-          ].filter(v => rejectedVariants
-            ? !rejectedVariants.includes(v.key)
-            : (!partiallyRejected || v.text !== item.original)
-          ).map(v => (
-          <div key={v.key}>
-            <div className="flex items-center justify-between mb-1.5">
-              <div>
-                <span className="text-xs font-bold" style={{ color: v.color }}>{v.label}</span>
-                <span className="text-xs text-dim ml-2">{v.sublabel}</span>
-              </div>
+        {accepted ? (
+          <div className="rounded-xl border border-teal/30 bg-teal/5 p-3.5 space-y-3">
+            <p className="flex items-center gap-1.5 text-xs font-semibold text-teal">
+              <CheckCircle size={13} /> Accepted — this text will be used in your export
+            </p>
+            <textarea
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              rows={3}
+              className="w-full text-sm text-navy leading-relaxed bg-surface rounded-lg px-3 py-2.5 border border-edge focus:outline-none focus:border-teal resize-y"
+            />
+            {placeholder && (
+              <p className="text-xs text-red">Fill in {placeholder} before exporting — a placeholder can't be accepted.</p>
+            )}
+            <div className="flex items-center gap-2 flex-wrap">
               <button
-                onClick={() => copy(v.text, v.key)}
-                className="flex items-center gap-1 text-[11px] text-mid hover:text-navy transition-colors px-2 py-1 rounded-md hover:bg-off"
+                onClick={() => onDecide("accepted", draft)}
+                disabled={!dirty || saving || !!placeholder || !draft.trim()}
+                className="px-3 py-1.5 text-xs font-semibold bg-teal text-navy rounded-lg hover:bg-teal-dim transition-all disabled:opacity-40"
               >
-                {copied === v.key ? <><CheckCircle size={11} className="text-teal" /> Copied!</> : <><Copy size={11} /> Copy</>}
+                {saving ? "Saving…" : "Save changes"}
+              </button>
+              <button
+                onClick={() => onDecide("pending")}
+                disabled={saving}
+                className="px-3 py-1.5 text-xs font-medium text-mid border border-edge rounded-lg hover:bg-off transition-all disabled:opacity-40"
+              >
+                Undo review
+              </button>
+              <span className="text-[11px] text-dim">Edit the text above, then save.</span>
+            </div>
+          </div>
+        ) : rejected ? (
+          <div className="rounded-xl border border-edge bg-off p-3.5 flex items-center justify-between gap-3 flex-wrap">
+            <p className="text-sm text-mid">Rejected — your original bullet will be exported unchanged.</p>
+            <button
+              onClick={() => onDecide("pending")}
+              disabled={saving}
+              className="px-3 py-1.5 text-xs font-medium text-mid border border-edge rounded-lg hover:bg-surface transition-all disabled:opacity-40"
+            >
+              Undo review
+            </button>
+          </div>
+        ) : guardRejected ? (
+          <p className="text-sm text-dim italic">{note}</p>
+        ) : (
+          <>
+            {[
+              { key: "moderate", label: "Moderate Rewrite", sublabel: "Clearer, stronger", text: item.moderate, color: "#00C9A7" },
+              { key: "aggressive", label: "Aggressive Rewrite", sublabel: "Maximum impact", text: item.aggressive, color: "#8B5CF6" },
+            ].filter(v => rejectedVariants
+              ? !rejectedVariants.includes(v.key)
+              : (!partiallyRejected || v.text !== item.original)
+            ).map(v => (
+              <div key={v.key}>
+                <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
+                  <div>
+                    <span className="text-xs font-bold" style={{ color: v.color }}>{v.label}</span>
+                    <span className="text-xs text-dim ml-2">{v.sublabel}</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => copy(v.text, v.key)}
+                      className="flex items-center gap-1 text-[11px] text-mid hover:text-navy transition-colors px-2 py-1 rounded-md hover:bg-off"
+                    >
+                      {copied === v.key ? <><CheckCircle size={11} className="text-teal" /> Copied!</> : <><Copy size={11} /> Copy</>}
+                    </button>
+                    <button
+                      onClick={() => onDecide("accepted", v.text)}
+                      disabled={saving}
+                      className="px-2.5 py-1 text-[11px] font-semibold text-navy bg-teal/20 border border-teal/30 rounded-md hover:bg-teal/30 transition-all disabled:opacity-40"
+                    >
+                      Use this
+                    </button>
+                  </div>
+                </div>
+                <p className="text-sm text-navy leading-relaxed bg-warm rounded-lg px-3 py-2.5 border border-edge">{v.text}</p>
+              </div>
+            ))}
+            {(partiallyRejected || (retryFailed && rejectedVariants?.length !== 2)) && <p className="text-sm text-dim italic">{retryFailed ? retryNote : note}</p>}
+            {retryFailed && rejectedVariants?.length === 2 && <p className="text-sm text-dim italic">{retryNote}</p>}
+            <div className="flex items-center justify-between gap-3 flex-wrap pt-1">
+              <p className="text-[11px] text-dim">Nothing is applied until you accept a rewrite.</p>
+              <button
+                onClick={() => onDecide("rejected")}
+                disabled={saving}
+                className="px-3 py-1.5 text-xs font-medium text-mid border border-edge rounded-lg hover:bg-off transition-all disabled:opacity-40"
+              >
+                Keep my original
               </button>
             </div>
-            <p className="text-sm text-navy leading-relaxed bg-warm rounded-lg px-3 py-2.5 border border-edge">{v.text}</p>
-          </div>
-        ))}
-        {(partiallyRejected || (retryFailed && rejectedVariants?.length !== 2)) && <p className="text-sm text-dim italic">{retryFailed ? retryNote : note}</p>}
-        {retryFailed && rejectedVariants?.length === 2 && <p className="text-sm text-dim italic">{retryNote}</p>}
+          </>
+        )}
       </div>
     </div>
   )
@@ -220,8 +306,16 @@ export default function Analysis({ navigate, addToast }: PageProps) {
   const [selectedKws, setSelectedKws] = useState<string[]>([])
   const [confirmLoading, setConfirmLoading] = useState(false)
   const [newlyConfirmed, setNewlyConfirmed] = useState<string[]>([])
+  // C6: per-rewrite review decisions. Only accepted ones reach the export.
+  const [rewriteDecisions, setRewriteDecisions] = useState<Record<string, RewriteDecision>>({})
+  const [rewriteSaving, setRewriteSaving] = useState<string | null>(null)
   const analysis = api.getLastAnalysis()
   const resumeMeta = api.getLastResumeMeta()
+
+  // The saved report is the source of truth when the page loads.
+  useEffect(() => {
+    setRewriteDecisions((analysis?.report?.rewrite_decisions ?? {}) as Record<string, RewriteDecision>)
+  }, [analysis?.id])
 
   const handleExport = async () => {
     const resumeId = api.getLastResumeId()
@@ -281,7 +375,36 @@ export default function Analysis({ navigate, addToast }: PageProps) {
     finally { setConfirmLoading(false) }
   }
 
+  // C6: accept/reject/edit one rewrite. Each decision is saved immediately so
+  // the export always matches what the user actually reviewed.
+  const handleRewriteDecision = async (
+    original: string,
+    action: "accepted" | "rejected" | "pending",
+    text?: string,
+  ) => {
+    const resumeId = api.getLastResumeId()
+    if (!resumeId || !analysis?.id) { addToast("error", "No resume selected"); return }
+    setRewriteSaving(original)
+    try {
+      const res = await api.saveRewriteDecisions(resumeId, analysis.id, [{ original, action, text }])
+      setRewriteDecisions(res.rewrite_decisions as Record<string, RewriteDecision>)
+      if (analysis.report) {
+        api.saveLastAnalysis({
+          ...analysis,
+          report: { ...analysis.report, rewrite_decisions: res.rewrite_decisions },
+        })
+      }
+      if (action === "accepted") addToast("success", "Rewrite accepted — the export will use this text.")
+      else if (action === "rejected") addToast("info", "Rewrite rejected — your original bullet stays as written.")
+      else addToast("info", "Review undone — this rewrite is unreviewed again.")
+    } catch (error) { addToast("error", error instanceof Error ? error.message : "Could not save rewrite decision") }
+    finally { setRewriteSaving(null) }
+  }
+
   const report = analysis?.report
+  // C6: how many reviewed rewrites will actually change the exported bullets.
+  const acceptedRewriteCount = Object.values(rewriteDecisions)
+    .filter(d => d.action === "accepted" && (d.text ?? "").trim()).length
   // F5: without an analysis there is nothing to show -- never render a zeroed-out report.
   if (!analysis) {
     return (
@@ -476,12 +599,16 @@ export default function Analysis({ navigate, addToast }: PageProps) {
               {analysis.job_id && (
                 <button
                   onClick={handleSaveVersion}
-                  disabled={saveVersionLoading}
+                  disabled={saveVersionLoading || acceptedRewriteCount === 0}
+                  title={acceptedRewriteCount === 0 ? "Accept at least one rewrite first" : undefined}
                   className="mt-3 flex items-center gap-2 px-4 py-2 bg-navy text-white text-xs font-semibold rounded-xl hover:bg-navy-light transition-all disabled:opacity-50"
                 >
                   <Save size={13} />
                   {saveVersionLoading ? "Saving version…" : "Save as version for this job"}
                 </button>
+              )}
+              {analysis.job_id && acceptedRewriteCount === 0 && (
+                <p className="text-xs text-dim mt-2">A version is built from accepted rewrites — accept at least one suggestion below first.</p>
               )}
             </div>
           )
@@ -710,12 +837,23 @@ export default function Analysis({ navigate, addToast }: PageProps) {
             <Zap size={16} className="text-teal" />
             <h2 className="font-display font-semibold text-base text-navy">AI Rewrite Suggestions</h2>
                 <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-teal/10 text-teal ml-1">Backend AI</span>
+                {rewrites.length > 0 && (
+                  <span className="ml-auto text-[11px] text-mid">{acceptedRewriteCount} of {rewrites.length} accepted</span>
+                )}
           </div>
           <div className="p-5 space-y-4">
-            <p className="text-sm text-mid">Weakest bullets, rewritten in two intensities. Review each one before pasting it into your resume.</p>
+            <p className="text-sm text-mid">Weakest bullets, rewritten in two intensities. Accept a rewrite to use it in your export, edit it first if you like, or keep your original. Nothing changes until you decide.</p>
             {hasAiErrors && <p className="text-xs text-dim">AI suggestions couldn't be generated for some bullets{aiErrorCause ? `: ${aiErrorCause}.` : " (the AI service didn't respond)."} Re-analyze to try again.</p>}
             {rewrites.length > 0
-              ? rewrites.map((r, i) => <RewriteCard key={i} item={r} />)
+              ? rewrites.map(r => (
+                <RewriteCard
+                  key={r.original}
+                  item={r}
+                  decision={rewriteDecisions[r.original]}
+                  saving={rewriteSaving === r.original}
+                  onDecide={(action, text) => handleRewriteDecision(r.original, action, text)}
+                />
+              ))
               : <div className="rounded-xl border border-amber/20 bg-amber/5 p-4 text-sm text-mid">AI rewrites are unavailable for this analysis. Check the backend AI configuration and run the analysis again; rule-based suggestions remain available in the bullet cards above.</div>}
           </div>
         </div>
@@ -755,6 +893,13 @@ export default function Analysis({ navigate, addToast }: PageProps) {
           <div>
             <p className="font-display font-semibold text-navy text-sm">Ready to apply?</p>
             <p className="text-xs text-mid">Download your ATS-optimized resume with all formatting fixes applied.</p>
+            <p className={`text-xs mt-1 ${acceptedRewriteCount > 0 ? "text-teal" : "text-dim"}`}>
+              {acceptedRewriteCount > 0
+                ? `${acceptedRewriteCount} accepted rewrite${acceptedRewriteCount === 1 ? "" : "s"} will be used in this export.`
+                : rewrites.length > 0
+                  ? "No rewrites accepted yet — your original bullets will be exported."
+                  : "Your original bullets will be exported."}
+            </p>
             {resumeMeta?.jobTitle && (
               <label className="mt-2 flex items-start gap-2 text-xs text-mid cursor-pointer select-none">
                 <input

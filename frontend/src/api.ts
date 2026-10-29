@@ -102,6 +102,9 @@ export interface ResumeAnalysis {
     // A3: missing keywords the user confirmed they actually have; only
     // these are injected into the exported resume's Skills section.
     confirmed_keywords?: string[]
+    // C6: the user's review of each AI rewrite. Only "accepted" entries are
+    // applied to the export; a fresh analysis has none.
+    rewrite_decisions?: Record<string, { action: "accepted" | "rejected"; text?: string }>
     grammar?: { typos_found?: Array<{ word: string; suggestion: string }> }
     ai_rewritten_examples?: Record<string, string | { moderate?: string; aggressive?: string; ai_output?: string; source?: string; error?: string; guard?: { status: string; reasons: string[]; retried: boolean; rejected_variants?: string[] } }>
     overall_score?: number
@@ -250,8 +253,26 @@ export async function confirmKeywords(
   )
 }
 
-export async function listVersions(resumeId: string): Promise<ResumeVersionSummary[]> {
-  return request<ResumeVersionSummary[]>(`/resumes/${resumeId}/versions`)
+// C6: review AI rewrites. `pending` clears a previous decision so the card is
+// unreviewed again. Only accepted rewrites reach the exported document.
+export async function saveRewriteDecisions(
+  resumeId: string,
+  analysisId: string,
+  decisions: Array<{ original: string; action: "accepted" | "rejected" | "pending"; text?: string }>
+): Promise<{
+  rewrite_decisions: Record<string, { action: "accepted" | "rejected"; text?: string }>
+  applied: number
+}> {
+  return request<{
+    rewrite_decisions: Record<string, { action: "accepted" | "rejected"; text?: string }>
+    applied: number
+  }>(`/resumes/${resumeId}/analyses/${analysisId}/rewrite-decisions`, {
+    method: "POST",
+    body: JSON.stringify({ decisions }),
+  })
+}
+
+export async function listVersions(resumeId: string): Promise<ResumeVersionSummary[]> {  return request<ResumeVersionSummary[]>(`/resumes/${resumeId}/versions`)
 }
 
 export async function exportVersion(

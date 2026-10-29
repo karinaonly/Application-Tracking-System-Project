@@ -191,6 +191,55 @@ class DocxExporterGlyphTests(unittest.TestCase):
         self.assertNotIn("Nest JS", text)
 
 
+class RewriteApplicationTests(unittest.TestCase):
+    """C6: the exporter applies accepted rewrites and refuses placeholders."""
+
+    ORIGINAL = "Built APIs with JavaScript, TypeScript, PostgreSQL, MongoDB, and GitHub Actions"
+
+    def _sections(self) -> dict:
+        sections = make_sections()
+        sections["experience_parsed"] = [
+            {
+                "title": "Backend Engineer",
+                "company": "Acme",
+                "dates": "2023 - 2025",
+                "bullets": [self.ORIGINAL],
+            }
+        ]
+        return sections
+
+    def test_plain_string_rewrite_is_applied(self):
+        # C6 stores accepted text as a plain string, not the old mapping.
+        text = document_text(DocxExporter().export_tailored(
+            self._sections(),
+            rewritten_bullets={self.ORIGINAL: "Built and shipped REST APIs in TypeScript"},
+        ))
+        self.assertIn("Built and shipped REST APIs in TypeScript", text)
+        self.assertNotIn(self.ORIGINAL, text)
+
+    def test_legacy_mapping_still_applies(self):
+        text = document_text(DocxExporter().export_tailored(
+            self._sections(),
+            rewritten_bullets={self.ORIGINAL: {"ai_output": "Built and shipped REST APIs"}},
+        ))
+        self.assertIn("Built and shipped REST APIs", text)
+
+    def test_placeholder_rewrite_is_refused(self):
+        text = document_text(DocxExporter().export_tailored(
+            self._sections(),
+            rewritten_bullets={self.ORIGINAL: "Built APIs serving [X] users"},
+        ))
+        self.assertNotIn("[X]", text)
+        self.assertIn(self.ORIGINAL, text)
+
+    def test_empty_rewrite_keeps_original(self):
+        text = document_text(DocxExporter().export_tailored(
+            self._sections(),
+            rewritten_bullets={self.ORIGINAL: "   "},
+        ))
+        self.assertIn(self.ORIGINAL, text)
+
+
 class KeywordFilterTests(unittest.TestCase):
     """A3: confirmed missing keywords reach the exported Skills section."""
 

@@ -19,6 +19,12 @@ from app.export.docx_exporter import DocxExporter
 from app.common.exceptions import AnalysisNotFoundError, JobNotFoundError, ResumeNotFoundError, VersionNotFoundError
 from app.common.skills import is_soft_skill
 
+# C6: rewrites are applied only after the user accepts them. An unfilled
+# placeholder ("[X]") must never reach the document — the exporter refuses
+# them too, but blocking at review time lets us tell the user why.
+_PLACEHOLDER_RE = re.compile(r"\[[^\]]{1,30}\]")
+MAX_REWRITE_CHARS = 600
+
 # How many flagged bullets we'll attempt to send for AI rewriting per analysis.
 # AIRewriter.MAX_BULLETS_PER_CALL caps what actually goes in the API request;
 # this just bounds how many we try to flag in the first place.
@@ -258,7 +264,10 @@ class ResumeService:
             # A3: only keywords the user confirmed they actually have reach
             # the export — raw missing keywords are never injected blind.
             confirmed_keywords = analysis.report.get("confirmed_keywords", [])
-            rewritten_bullets = analysis.report.get("ai_rewritten_examples", {})
+            # C6: only rewrites the user accepted (or edited) reach the export.
+            # A fresh analysis applies none: the original bullets are exported
+            # until the user reviews the suggestions.
+            rewritten_bullets = self._decided_rewrites(analysis.report)
 
             # Fetch the job title. A4: it is only used when the caller asks for
             # it (match_title) — by default the export keeps the resume's own
@@ -355,21 +364,154 @@ class ResumeService:
         return confirmed, soft_skipped
 
     # ------------------------------------------------------------------ #
+    # C6: user review of AI rewrites
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def _decided_rewrites(cls, report: dict) -> dict[str, str]:
+        """The rewrites the user accepted, ready for the exporter.
+
+        Nothing is applied by default: a fresh analysis has no decisions, so
+        the export keeps the original bullets until the user reviews them.
+        Rejected suggestions and unfilled placeholders are never applied.
+        """
+        decisions = report.get("rewrite_decisions") or {}
+        out: dict[str, str] = {}
+        for original, decision in decisions.items():
+            if not isinstance(decision, dict):
+                continue
+            if decision.get("action") != "accepted":
+                continue
+            text = str(decision.get("text") or "").strip()
+            if not text or text == str(original).strip():
+                continue
+            if _PLACEHOLDER_RE.search(text):
+                continue
+            out[original] = text
+        return out
+
+    def confirm_rewrites(
+        self,
+        resume_id: UUID,
+        analysis_id: UUID,
+        user_id: UUID,
+        decisions: list,
+    ) -> tuple[dict, int]:
+        """Store the user's accept/reject/edit decision per AI rewrite.
+
+        Decisions merge by original bullet, so the UI can save one card at a
+        time. Only accepted (or edited) rewrites are applied to the export;
+        rejecting a suggestion keeps the original bullet.
+
+        Returns ``(rewrite_decisions, applied_count)``.
+        """
+        resume = self.session.get(Resume, resume_id)
+        if not resume or resume.user_id != user_id:
+            raise ResumeNotFoundError()
+        analysis = self.session.get(ResumeAnalysis, analysis_id)
+        if not analysis or analysis.resume_id != resume_id:
+            raise AnalysisNotFoundError()
+
+        examples = (analysis.report or {}).get("ai_rewritten_examples") or {}
+        suggestions = {
+            original: opt for original, opt in examples.items()
+            if isinstance(opt, dict)
+        }
+
+        updates: dict[str, dict | None] = {}
+        unknown: list[str] = []
+        invalid: list[str] = []
+        for item in decisions:
+            if not isinstance(item, dict):
+                raise HTTPException(
+                    status_code=400, detail="Each decision must be an object"
+                )
+            original = str(item.get("original") or "").strip()
+            action = str(item.get("action") or "").strip().lower()
+            if original not in suggestions:
+                unknown.append(original)
+                continue
+            if action == "pending":
+                # Undo: drop the decision so the card is unreviewed again and
+                # the export keeps the original bullet.
+                updates[original] = None
+                continue
+            if action not in ("accepted", "rejected"):
+                invalid.append(
+                    f"{original}: action must be 'accepted', 'rejected' or 'pending'"
+                )
+                continue
+            if action == "rejected":
+                updates[original] = {"action": "rejected", "text": ""}
+                continue
+
+            text = str(item.get("text") or "").strip()
+            if not text:
+                # "Accept" without an edit applies the moderate rewrite.
+                text = str(suggestions[original].get("ai_output") or "").strip()
+            placeholder = _PLACEHOLDER_RE.search(text)
+            if placeholder:
+                # C6: a rewrite with an unfilled "[X]" must never be accepted —
+                # that is exactly the download-time surprise this item exists
+                # to prevent.
+                invalid.append(
+                    f"{original}: fill in the {placeholder.group(0)} "
+                    "placeholder before accepting this rewrite"
+                )
+                continue
+            if not text:
+                invalid.append(f"{original}: there is no rewrite text to accept")
+                continue
+            if len(text) > MAX_REWRITE_CHARS:
+                invalid.append(
+                    f"{original}: rewrite is too long "
+                    f"(max {MAX_REWRITE_CHARS} characters)"
+                )
+                continue
+            updates[original] = {"action": "accepted", "text": text}
+
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Not an AI rewrite in this analysis: " + ", ".join(unknown)
+                ),
+            )
+        if invalid:
+            raise HTTPException(status_code=400, detail="; ".join(invalid))
+        if not updates:
+            raise HTTPException(status_code=400, detail="No rewrite decisions to save")
+
+        report = analysis.report or {}
+        # New dict object, same reason as confirm_keywords: in-place mutation is
+        # invisible to SQLAlchemy's JSON change detection.
+        merged = {
+            key: value
+            for key, value in {
+                **(report.get("rewrite_decisions") or {}),
+                **updates,
+            }.items()
+            if value is not None
+        }
+        analysis.report = {**report, "rewrite_decisions": merged}
+        self.session.add(analysis)
+        self.session.commit()
+        self.session.refresh(analysis)
+        return merged, len(self._decided_rewrites(analysis.report))
+
+    # ------------------------------------------------------------------ #
     # D3: per-job tailored resume versions
     # ------------------------------------------------------------------ #
 
     @classmethod
     def _applied_rewrites_from_report(cls, report: dict) -> dict[str, str]:
-        """Only rewrites that actually changed a bullet count as applied —
-        withheld or guard-rejected ones are identical to the original and
-        must not be claimed (same rule as the D1 improvement scoring)."""
-        return {
-            orig: opt["ai_output"]
-            for orig, opt in (report.get("ai_rewritten_examples") or {}).items()
-            if isinstance(opt, dict)
-            and opt.get("ai_output")
-            and opt["ai_output"].strip() != orig.strip()
-        }
+        """D3: the rewrites to bake into a saved version.
+
+        C6: a version is built from the rewrites the user accepted, not from
+        every suggestion the model produced — otherwise saving a version would
+        silently apply text the user never approved.
+        """
+        return cls._decided_rewrites(report)
 
     @classmethod
     def _tailored_sections(cls, sections: dict, applied: dict[str, str]) -> dict:
@@ -405,10 +547,15 @@ class ResumeService:
         applied = self._applied_rewrites_from_report(analysis.report or {})
         if not applied:
             # Honesty: a "tailored version" with zero changed bullets would be
-            # an identical copy -- nothing to store.
+            # an identical copy -- nothing to store. C6: rewrites only count
+            # once the user accepts them.
             raise HTTPException(
                 status_code=400,
-                detail="No rewrites were applied in this analysis, so there is nothing to save as a version yet.",
+                detail=(
+                    "No AI rewrites have been accepted for this analysis yet. "
+                    "Review the suggestions and accept the ones you want before "
+                    "saving a version."
+                ),
             )
 
         tailored_text = resume.raw_text

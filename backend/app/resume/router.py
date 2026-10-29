@@ -106,6 +106,26 @@ def confirm_keywords(
     )
     return {"confirmed_keywords": confirmed, "soft_skipped": soft_skipped}
 
+@router.post("/{resume_id}/analyses/{analysis_id}/rewrite-decisions")
+def save_rewrite_decisions(
+    resume_id: UUID,
+    analysis_id: UUID,
+    body: dict,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    # C6: AI rewrites are applied to the export only after the user accepts
+    # (or edits) them. Decisions merge by original bullet, so the UI can save
+    # one suggestion at a time.
+    decisions = body.get("decisions")
+    if not isinstance(decisions, list):
+        raise HTTPException(status_code=400, detail="decisions must be a list")
+    service = ResumeService(session)
+    stored, applied = service.confirm_rewrites(
+        resume_id, analysis_id, user.id, decisions
+    )
+    return {"rewrite_decisions": stored, "applied": applied}
+
 @router.post("/{resume_id}/versions", status_code=201)
 def create_version(
     resume_id: UUID,

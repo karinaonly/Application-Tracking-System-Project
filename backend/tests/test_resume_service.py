@@ -209,8 +209,15 @@ class ExportAnalysisSelectionTests(unittest.TestCase):
     def test_requested_analysis_rewrites_are_used(self):
         owner_id = uuid4()
         resume = make_resume(owner_id)
-        selected = make_analysis(resume.id, {"ai_rewritten_examples": {"b": {"ai_output": "SELECTED"}}})
-        other = make_analysis(resume.id, {"ai_rewritten_examples": {"b": {"ai_output": "LATEST"}}})
+        # C6: an accepted rewrite is what reaches the exporter.
+        selected = make_analysis(resume.id, {
+            "ai_rewritten_examples": {"b": {"ai_output": "SELECTED"}},
+            "rewrite_decisions": {"b": {"action": "accepted", "text": "SELECTED"}},
+        })
+        other = make_analysis(resume.id, {
+            "ai_rewritten_examples": {"b": {"ai_output": "LATEST"}},
+            "rewrite_decisions": {"b": {"action": "accepted", "text": "LATEST"}},
+        })
 
         def fake_get(model, _id):
             if model is Resume:
@@ -224,7 +231,30 @@ class ExportAnalysisSelectionTests(unittest.TestCase):
         self.service.export_docx(resume.id, owner_id, selected.id)
 
         kwargs = self.exporter.export_tailored.call_args.kwargs
-        self.assertEqual(kwargs["rewritten_bullets"], {"b": {"ai_output": "SELECTED"}})
+        self.assertEqual(kwargs["rewritten_bullets"], {"b": "SELECTED"})
+
+    def test_unreviewed_rewrites_are_not_applied(self):
+        # C6: a fresh analysis has suggestions but no decisions — exporting it
+        # must keep the original bullets, not silently apply the AI text.
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        analysis = make_analysis(resume.id, {
+            "ai_rewritten_examples": {"b": {"ai_output": "AI TEXT"}},
+        })
+
+        def fake_get(model, _id):
+            if model is Resume:
+                return resume
+            if model is ResumeAnalysis and _id == analysis.id:
+                return analysis
+            return None
+
+        self.service.session.get.side_effect = fake_get
+
+        self.service.export_docx(resume.id, owner_id, analysis.id)
+
+        kwargs = self.exporter.export_tailored.call_args.kwargs
+        self.assertEqual(kwargs["rewritten_bullets"], {})
 
     def test_analysis_from_another_resume_is_rejected(self):
         owner_id = uuid4()
@@ -246,7 +276,10 @@ class ExportAnalysisSelectionTests(unittest.TestCase):
     def test_falls_back_to_latest_without_analysis_id(self):
         owner_id = uuid4()
         resume = make_resume(owner_id)
-        latest = make_analysis(resume.id, {"ai_rewritten_examples": {"b": {"ai_output": "LATEST"}}})
+        latest = make_analysis(resume.id, {
+            "ai_rewritten_examples": {"b": {"ai_output": "LATEST"}},
+            "rewrite_decisions": {"b": {"action": "accepted", "text": "LATEST"}},
+        })
 
         self.service.session.get.side_effect = lambda model, _id: resume if model is Resume else None
         fake_result = MagicMock()
@@ -256,7 +289,7 @@ class ExportAnalysisSelectionTests(unittest.TestCase):
         self.service.export_docx(resume.id, owner_id)
 
         kwargs = self.exporter.export_tailored.call_args.kwargs
-        self.assertEqual(kwargs["rewritten_bullets"], {"b": {"ai_output": "LATEST"}})
+        self.assertEqual(kwargs["rewritten_bullets"], {"b": "LATEST"})
 
     def test_export_passes_only_confirmed_keywords(self):
         # A3: raw missing keywords never reach the exporter — only the
@@ -420,6 +453,210 @@ class ConfirmKeywordsTests(unittest.TestCase):
             self.service.confirm_keywords(resume.id, analysis.id, owner_id, ["Docker"])
 
 
+class ConfirmRewriteTests(unittest.TestCase):
+    """C6: AI rewrites reach the export only after the user reviews them."""
+
+    ORIGINAL = "Did tasks for the team"
+
+    def setUp(self):
+        self.service = ResumeService(MagicMock())
+
+    def _wire(self, resume, analysis):
+        def fake_get(model, _id):
+            if model is Resume:
+                return resume
+            if model is ResumeAnalysis:
+                return analysis
+            return None
+
+        self.service.session.get.side_effect = fake_get
+
+    def _analysis(self, resume, **extra):
+        report = {
+            "ai_rewritten_examples": {
+                self.ORIGINAL: {
+                    "ai_output": "Led a 5-person team to deliver the release",
+                    "moderate": "Led a 5-person team to deliver the release",
+                    "aggressive": "Directed a 5-person team to ship the release on time",
+                    "source": "groq",
+                },
+            },
+        }
+        report.update(extra)
+        return make_analysis(resume.id, report=report)
+
+    def test_accept_applies_moderate_rewrite(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        analysis = self._analysis(resume)
+        self._wire(resume, analysis)
+
+        stored, applied = self.service.confirm_rewrites(
+            resume.id, analysis.id, owner_id,
+            [{"original": self.ORIGINAL, "action": "accepted"}],
+        )
+
+        self.assertEqual(stored[self.ORIGINAL]["action"], "accepted")
+        self.assertEqual(
+            stored[self.ORIGINAL]["text"],
+            "Led a 5-person team to deliver the release",
+        )
+        self.assertEqual(applied, 1)
+        self.assertEqual(analysis.report["rewrite_decisions"], stored)
+        self.service.session.commit.assert_called()
+
+    def test_accept_with_edit_uses_edited_text(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        analysis = self._analysis(resume)
+        self._wire(resume, analysis)
+
+        stored, applied = self.service.confirm_rewrites(
+            resume.id, analysis.id, owner_id,
+            [{
+                "original": self.ORIGINAL,
+                "action": "accepted",
+                "text": "  Led a 4-person team to deliver the release  ",
+            }],
+        )
+
+        self.assertEqual(
+            stored[self.ORIGINAL]["text"], "Led a 4-person team to deliver the release"
+        )
+        self.assertEqual(applied, 1)
+
+    def test_reject_keeps_original_bullet(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        analysis = self._analysis(resume)
+        self._wire(resume, analysis)
+
+        stored, applied = self.service.confirm_rewrites(
+            resume.id, analysis.id, owner_id,
+            [{"original": self.ORIGINAL, "action": "rejected"}],
+        )
+
+        self.assertEqual(stored[self.ORIGINAL], {"action": "rejected", "text": ""})
+        self.assertEqual(applied, 0)
+
+    def test_placeholder_cannot_be_accepted(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        analysis = self._analysis(resume)
+        self._wire(resume, analysis)
+
+        with self.assertRaises(HTTPException) as ctx:
+            self.service.confirm_rewrites(
+                resume.id, analysis.id, owner_id,
+                [{
+                    "original": self.ORIGINAL,
+                    "action": "accepted",
+                    "text": "Led a [X]-person team to deliver the release",
+                }],
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("[X]", ctx.exception.detail)
+        self.assertNotIn("rewrite_decisions", analysis.report)
+        self.service.session.commit.assert_not_called()
+
+    def test_unknown_original_is_rejected(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        analysis = self._analysis(resume)
+        self._wire(resume, analysis)
+
+        with self.assertRaises(HTTPException) as ctx:
+            self.service.confirm_rewrites(
+                resume.id, analysis.id, owner_id,
+                [{"original": "A bullet that was never rewritten", "action": "accepted"}],
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertNotIn("rewrite_decisions", analysis.report)
+
+    def test_decisions_merge_one_card_at_a_time(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        second = "Managed the backlog"
+        analysis = make_analysis(resume.id, report={
+            "ai_rewritten_examples": {
+                self.ORIGINAL: {"ai_output": "Led a team"},
+                second: {"ai_output": "Prioritized the backlog"},
+            },
+        })
+        self._wire(resume, analysis)
+
+        self.service.confirm_rewrites(
+            resume.id, analysis.id, owner_id,
+            [{"original": self.ORIGINAL, "action": "accepted"}],
+        )
+        stored, applied = self.service.confirm_rewrites(
+            resume.id, analysis.id, owner_id,
+            [{"original": second, "action": "accepted"}],
+        )
+
+        self.assertEqual(set(stored), {self.ORIGINAL, second})
+        self.assertEqual(applied, 2)
+
+    def test_pending_clears_a_previous_decision(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        analysis = self._analysis(resume, rewrite_decisions={
+            self.ORIGINAL: {"action": "accepted", "text": "Led a team"},
+        })
+        self._wire(resume, analysis)
+
+        stored, applied = self.service.confirm_rewrites(
+            resume.id, analysis.id, owner_id,
+            [{"original": self.ORIGINAL, "action": "pending"}],
+        )
+
+        self.assertEqual(stored, {})
+        self.assertEqual(applied, 0)
+        self.assertEqual(analysis.report["rewrite_decisions"], {})
+
+    def test_empty_decisions_are_rejected(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        analysis = self._analysis(resume)
+        self._wire(resume, analysis)
+
+        with self.assertRaises(HTTPException) as ctx:
+            self.service.confirm_rewrites(resume.id, analysis.id, owner_id, [])
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_foreign_analysis_is_rejected(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        foreign = make_analysis(uuid4(), report={
+            "ai_rewritten_examples": {self.ORIGINAL: {"ai_output": "Led a team"}},
+        })
+        self._wire(resume, foreign)
+
+        with self.assertRaises(AnalysisNotFoundError):
+            self.service.confirm_rewrites(
+                resume.id, foreign.id, owner_id,
+                [{"original": self.ORIGINAL, "action": "accepted"}],
+            )
+
+    def test_foreign_resume_is_rejected(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        analysis = self._analysis(resume)
+
+        def fake_get(model, _id):
+            if model is Resume:
+                return make_resume(uuid4())  # someone else's resume
+            return None
+
+        self.service.session.get.side_effect = fake_get
+
+        with self.assertRaises(ResumeNotFoundError):
+            self.service.confirm_rewrites(
+                resume.id, analysis.id, owner_id,
+                [{"original": self.ORIGINAL, "action": "accepted"}],
+            )
+
+
 class VersionTests(unittest.TestCase):
     """D3: per-job tailored resume versions stored server-side."""
 
@@ -444,9 +681,13 @@ class VersionTests(unittest.TestCase):
         )
 
     def _make_analysis(self, resume, job_id=None, ai_output="Led 5-member team") -> ResumeAnalysis:
+        # C6: a rewrite only reaches a version once the user accepts it.
         return make_analysis(resume.id, report={
             "ai_rewritten_examples": {
                 "Did tasks for the team": {"ai_output": ai_output, "source": "groq"},
+            },
+            "rewrite_decisions": {
+                "Did tasks for the team": {"action": "accepted", "text": ai_output},
             },
         }, job_id=job_id)
 

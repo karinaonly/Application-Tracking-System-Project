@@ -516,13 +516,9 @@ class DocxExporter:
             if not text:
                 continue
             if rewritten and b in rewritten:
-                opt = rewritten[b]
-                if (
-                    isinstance(opt, dict)
-                    and opt.get("ai_output")
-                    and not self.PLACEHOLDER_RE.search(opt["ai_output"])
-                ):
-                    text = opt["ai_output"]
+                replacement = self._rewrite_text(rewritten[b])
+                if replacement:
+                    text = replacement
 
             # Fix: unrenderable Unicode hyphens (U+2011 etc.) from PDF/AI text
             # render as tofu boxes in DOCX viewers — normalize to ASCII.
@@ -703,17 +699,30 @@ class DocxExporter:
     # helpers
     # ---------------------------------------------------------------- #
 
+    def _rewrite_text(self, opt) -> str | None:
+        """Text to apply for one rewrite entry, or None to keep the original.
+
+        Accepts either a plain string (C6: what the user accepted) or the older
+        ``{"ai_output": ...}`` mapping stored on pre-C6 analyses. A rewrite with
+        an unfilled ``[X]`` placeholder is never applied.
+        """
+        if isinstance(opt, str):
+            candidate = opt.strip()
+        elif isinstance(opt, dict):
+            candidate = str(opt.get("ai_output") or "").strip()
+        else:
+            return None
+        if not candidate or self.PLACEHOLDER_RE.search(candidate):
+            return None
+        return candidate
+
     def _apply_rewrites(self, text: str, rewritten_bullets: dict | None) -> str:
         if not rewritten_bullets:
             return text
-        for orig, ai_opt in rewritten_bullets.items():
-            if (
-                orig in text
-                and isinstance(ai_opt, dict)
-                and ai_opt.get("ai_output")
-                and not self.PLACEHOLDER_RE.search(ai_opt["ai_output"])
-            ):
-                text = text.replace(orig, ai_opt["ai_output"])
+        for orig, opt in rewritten_bullets.items():
+            replacement = self._rewrite_text(opt)
+            if replacement and orig in text:
+                text = text.replace(orig, replacement)
         return _normalize_glyphs(text)
 
     def _split_unknown_camel_case(self, text: str) -> str:
