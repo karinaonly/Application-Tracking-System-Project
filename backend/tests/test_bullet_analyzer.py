@@ -154,6 +154,24 @@ class MetricTests(unittest.TestCase):
         ):
             self.assertTrue(ba._check_bullet(text, "Experience")["has_metrics"], text)
 
+    def test_phone_numbers_are_not_metrics(self):
+        # A11: a phone number used to produce four fake "metrics".
+        for text in (
+            "Reachable at +63 917 234 5678",
+            "Call (02) 1234 5678 for support",
+            "+1 (555) 123-4567",
+        ):
+            r = ba._check_bullet(text, "Experience")
+            self.assertEqual(r["metrics"], [], text)
+            self.assertFalse(r["has_metrics"], text)
+
+    def test_real_metric_survives_a_phone_number_in_the_same_bullet(self):
+        r = ba._check_bullet(
+            "Managed a 5-member team; reachable at +63 917 234 5678", "Experience"
+        )
+        self.assertEqual(r["metrics"], ["5"])
+        self.assertTrue(r["has_metrics"])
+
 
 if __name__ == "__main__":
     unittest.main()

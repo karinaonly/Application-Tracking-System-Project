@@ -61,13 +61,15 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   *Fix:* validate extension and size before processing, and return clear 400/413 errors.
   ✅ *Done 2026-10-29: the configured allowlist and size cap are enforced before parsing or writing. Unsupported/extensionless files return 400 listing the allowed types, empty files return 400, and oversized files return 413 with the configured limit; the file is read at most `max + 1` bytes so a huge upload is rejected without being loaded whole. Covered by 11 upload tests.*
 
-- [ ] **A8 (P2): Grammar checker skips most words** · `analyzer/grammar_checker.py`
+- [x] **A8 (P2): Grammar checker skips most words** · `analyzer/grammar_checker.py`
   It filters with `w.isalpha()` *before* stripping punctuation, so words like "system," or "(API)" are skipped. It also caps output at 10 typos.
   *Fix:* strip punctuation first, ignore known tech terms, and raise or remove the cap.
+  ✅ *Done 2026-10-29: words are now extracted with a regex before any filtering, so "recieve," and "(seperate)" are checked instead of skipped; apostrophes stay in contractions and hyphens/dots split words cleanly. Known tech vocabulary (every single-token `HARD_SKILLS` name/alias plus common acronyms like API/SQL/REST/CI) is ignored, one-letter tokens (C, R) are skipped, and every typo is reported — the 10-item cap is gone and the score counts all of them. A proper-noun guard keeps resumes usable: all-caps acronyms and mixed-case tech names are skipped, and a capitalized word is only checked at the start of a sentence/line, so company/school/person names no longer get invented corrections. Verified on a real resume: 19 false positives before the guard, 0 after. Covered by the new `tests/test_grammar_checker.py`.*
 
-- [ ] **A9 (P2): Metric regex misses common metrics** · `analyzer/bullet_analyzer.py`
+- [x] **A9 (P2): Metric regex misses common metrics** · `analyzer/bullet_analyzer.py`
   Single-digit numbers ("team of 5", "2 projects") aren't counted, and version numbers like "Python 3.11" count as metrics.
   *Fix:* refine the regex to distinguish real impact metrics from versions and dates.
+  ✅ *Closed 2026-10-29: the rewritten `_extract_metrics` (2026-09-29) plus A16's decimal/magnitude handling and A11's phone exclusion now cover the reported gaps. `tests/test_bullet_analyzer.py` verifies single-digit quantities, money/percent/magnitude formats, versions/years, decimals, and phone numbers.*
   ✅ *Done 2026-09-29 (Copilot, verified by Claude): rewrote `_extract_metrics` with money/%/number regexes, tech-version and year exclusion, and a quantity-noun check for single digits ("5-member team"). Verified against GPAs, date ranges, Next.js/Node version numbers — all correctly excluded. New minor gap found: phone numbers inside a bullet are NOT excluded, logged as A11.*
   🔴 *Reopened 2026-10-23: decimals and unit-scaled metrics are still missed — "Cut latency by 2.5x", "Reduced build time to 3.5 hours", "Served 1.5 million users" all return no metric. Tracked as A16.*
 
@@ -76,9 +78,10 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   *Fix:* ignore lines containing an email, URL, or phone number, and only count a capital "I" when followed by a lowercase word or as a contraction (I'm, I've, I'll, I'd).
   ✅ *Done 2026-09-29 (Copilot, verified by Claude): confirmed the fix reads the real `sections["contact"]["raw"]` key your parser produces. Verified against "Phase I", "Level I Support", "I.T. department" (correctly ignored) and real pronoun sentences (correctly counted, and the >2 threshold still works at exactly 2 and 3 occurrences).*
 
-- [ ] **A11 (P3): Phone numbers inside a bullet count as metrics** · `analyzer/bullet_analyzer.py`
+- [x] **A11 (P3): Phone numbers inside a bullet count as metrics** · `analyzer/bullet_analyzer.py`
   Found during verification of A9. A bullet like "Reachable at +63 917 234 5678" produces 4 false "metrics" (63, 917, 234, 5678).
   *Fix:* exclude numbers matching a phone-like pattern from `_extract_metrics`, the same approach `ats_checker.py`'s `_CONTACT_LINE_RE` already uses.
+  ✅ *Done 2026-10-29: `_extract_metrics` now computes phone-like spans (digit runs with spaces, dots, parentheses, or dashes) and skips any number inside them. A span needs at least 7 digits, so short quantities such as "50 000" are not misread as phone numbers. A real metric in the same bullet ("Managed a 5-member team; reachable at +63 917 234 5678") still counts. Covered by two new metric tests.*
 
 - [x] **A12 (P0): AI rewriting is silently disabled by the key-prefix check** · `analyzer/ai_rewriter.py`, `auth/router.py`
   Found 2026-10-23. Groq keys start with `gsk_` (underscore), but `valid_key` requires `startswith("gsk-")` (hyphen). `AIRewriter().client` is `None`, so every bullet returns `source="fallback"` and no AI feature runs. `/auth/ai-status` still reports the AI as configured, so the UI can't tell either. The `OpenAI(...)` client is also built with no timeout.
@@ -413,13 +416,13 @@ Counts verified against the item list on 2026-10-23. (F14 is unused; numbering j
 
 | Section | Items | Done |
 |---|---|---|
-| A. Bugs | 22 | 19 |
+| A. Bugs | 22 | 22 |
 | B. Scoring | 11 | 9 |
 | C. AI Rewriter | 13 | 12 |
 | D. Features | 8 | 4 |
 | E. Security & Config | 6 | 4 |
 | F. Hygiene | 17 | 12 |
-| **Total** | **77** | **60** |
+| **Total** | **77** | **63** |
 
 Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrites from Groq, no fallbacks), A13 (a real resume export keeps its tech spellings), E1 (empty `JWT_SECRET` aborts startup), E2 (allowed preflight 200 / foreign origin 400), and E5 (zero SQL-echo lines in the live log). A14's new certifications/languages sections are fixture-tested because the current real resume has neither; A19 is build-verified but still needs a UI click-through to become 🟢. The rest of the C section remains unit-tested only (🟡) until each item is exercised individually.
 
@@ -429,6 +432,7 @@ Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrit
 
 | Date | Item(s) | What changed | Notes |
 |---|---|---|---|
+| 2026-10-29 | A8, A9, A11 | The grammar checker now extracts words before filtering, so punctuation no longer hides them ("recieve," / "(seperate)" are caught), known skill/acronym vocabulary is ignored, and the 10-typo cap is gone. A proper-noun guard (skip all-caps/mixed-case, only check capitalized words at sentence start) removed 19 false positives on a real resume without hiding sentence-start typos. Bullet metrics now ignore phone-like digit runs (at least 7 digits, with spaces/dots/parens/dashes) while keeping real metrics in the same bullet. A9 is closed: its rewritten regex plus A16/A11 cover single-digit quantities, versions/years, decimals, and phones. | 275 backend tests pass (14 new: `test_grammar_checker.py` + 2 phone tests); `bun run build` clean. Counts: A 19 → 22, total 60 → 63. |
 | 2026-10-29 | B7, B8 | The keyword score now respects how a job asks for each skill: D2's required / preferred / other buckets weight recognized skills 3× / 2× / 1×, so a missing must-have costs more than a missing nice-to-have. Each `keyword_details` entry reports its `importance`, and results carry `weighted` (false for pre-D2 jobs, which keep the old plain coverage). The noisy two-document TF-IDF cosine (`similarity`) was removed entirely — with only two documents IDF carries almost no signal — and `scikit-learn` was dropped from `requirements.txt`; the weighted coverage score is now the single coverage number. The UI explains the weighting and counts missing required/preferred skills. | 261 backend tests pass (5 engine weighting tests + 1 service test proving the buckets are forwarded); `bun run build` clean. Counts: B 7 → 9, total 58 → 60. |
 | 2026-10-29 | A5 | Closed by C6: the review card offers "Use this" on both the moderate and aggressive variant, and the exporter applies the accepted text instead of only `ai_output`. No separate per-bullet picker is needed. | Roadmap-only entry; behavior shipped with C6 and verified by its tests. Counts: A 18 → 19, total 57 → 58. |
 | 2026-10-29 | D4 (remainder) | URL import now extracts the real employer from the page's schema.org `JobPosting` JSON-LD (`hiringOrganization`, dict/string, `@graph` supported) instead of writing "Extracted from web". With no schema the company stays empty and the UI shows "Company not provided" — no invented name. The visible `<h1>` is captured before `<header>` is stripped, fixing headlines that were previously lost, with the JSON-LD title as fallback; malformed JSON-LD is ignored. | 255 backend tests pass (7 new mocked-HTTP tests). Counts: D 3 → 4, total 56 → 57. |
