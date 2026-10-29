@@ -24,7 +24,7 @@ function ScoreMockup() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-white/50 text-[11px] font-medium uppercase tracking-widest mb-1">Overall ATS Score</p>
-              <p className="text-white font-display text-lg font-semibold">Alex_Kim_Resume.pdf</p>
+              <p className="text-white font-display text-lg font-semibold">sample_resume.pdf</p>
             </div>
             <div className="relative w-20 h-20">
               <svg viewBox="0 0 80 80" className="w-full h-full">
@@ -124,7 +124,7 @@ const features = [
   {
     icon: Sparkles,
     title: "AI-Powered Rewrites",
-    desc: "GPT-backed moderate and aggressive rewrite suggestions turn weak bullets into compelling achievements.",
+    desc: "Moderate and aggressive rewrite suggestions turn weak bullets into clearer achievements — and nothing is applied until you approve it.",
     color: "#F59E0B",
     bg: "rgba(245,158,11,0.1)",
   },
@@ -155,7 +155,7 @@ const steps = [
     n: "02",
     icon: FileSearch,
     title: "Add a Job Description",
-    desc: "Paste the job posting directly or provide a URL and we'll scrape it. Works with LinkedIn, Greenhouse, and more.",
+    desc: "Paste the job posting directly, or import it from a public URL. If a site blocks automated access, paste the text instead.",
   },
   {
     n: "03",
@@ -191,7 +191,7 @@ export default function Landing({ navigate }: LandingProps) {
               className="px-4 py-2 bg-teal text-navy text-sm font-semibold rounded-lg hover:bg-teal-dim transition-all"
               style={{ boxShadow: "0 0 20px rgba(0,201,167,0.3)" }}
             >
-              Get Started Free
+              Get Started
             </button>
           </div>
         </div>
@@ -228,7 +228,7 @@ export default function Landing({ navigate }: LandingProps) {
                 className="flex items-center justify-center gap-2 px-6 py-3.5 bg-teal text-navy font-semibold rounded-xl text-sm hover:bg-teal-dim transition-all group"
                 style={{ boxShadow: "0 0 30px rgba(0,201,167,0.35)" }}
               >
-                Analyze My Resume — Free
+                Analyze My Resume
                 <ArrowRight size={16} className="group-hover:translate-x-0.5 transition-transform" />
               </button>
               <button
@@ -241,9 +241,9 @@ export default function Landing({ navigate }: LandingProps) {
             </div>
             <div className="flex items-center gap-6">
               {[
-                { val: "12,000+", label: "Resumes analyzed" },
-                { val: "3×", label: "More callbacks" },
-                { val: "95%", label: "ATS pass rate" },
+                { val: "3", label: "Upload formats" },
+                { val: "2", label: "Export formats" },
+                { val: "Opt-in", label: "AI rewrites" },
               ].map(s => (
                 <div key={s.label}>
                   <p className="font-display font-bold text-xl text-white">{s.val}</p>
@@ -316,10 +316,10 @@ export default function Landing({ navigate }: LandingProps) {
         <div className="max-w-7xl mx-auto px-6">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-8">
             {[
-              { val: "12,400+", label: "Resumes Analyzed", sub: "and counting" },
-              { val: "3×",      label: "More Interview Callbacks", sub: "on average" },
-              { val: "95%",     label: "ATS Pass Rate", sub: "after optimization" },
-              { val: "<60s",    label: "Analysis Time", sub: "per resume" },
+              { val: "3",       label: "Upload Formats", sub: "PDF, DOCX, and TXT" },
+              { val: "2",       label: "Export Formats", sub: "clean DOCX and PDF" },
+              { val: "100%",    label: "Rewrite Review", sub: "nothing applied without approval" },
+              { val: "Opt-in",  label: "AI Usage", sub: "off until you enable it" },
             ].map(s => (
               <div key={s.label} className="text-center">
                 <p className="font-display font-extrabold text-4xl text-teal mb-1" style={{ textShadow: "0 0 20px rgba(0,201,167,0.3)" }}>{s.val}</p>
@@ -338,16 +338,16 @@ export default function Landing({ navigate }: LandingProps) {
             <Zap size={24} className="text-teal" fill="#00C9A7" />
           </div>
           <h2 className="font-display font-bold text-4xl text-navy mb-4">Your next job starts with a better resume</h2>
-          <p className="text-mid leading-relaxed mb-8">Join thousands of job seekers who've used ResumeATS Pro to land interviews at companies like Stripe, Google, and Airbnb.</p>
+          <p className="text-mid leading-relaxed mb-8">Upload a resume, compare it against a job description, and see exactly which keywords and bullets need work. Every AI suggestion waits for your approval before it touches your resume.</p>
           <button
             onClick={() => navigate("register")}
             className="inline-flex items-center gap-2 px-8 py-4 bg-teal text-navy font-bold rounded-xl text-sm hover:bg-teal-dim transition-all group"
             style={{ boxShadow: "0 0 30px rgba(0,201,167,0.3)" }}
           >
-            Start for Free — No Credit Card
+            Create an Account
             <ArrowRight size={16} className="group-hover:translate-x-0.5 transition-transform" />
           </button>
-          <p className="text-dim text-xs mt-4">Free plan includes 3 resume analyses per month</p>
+          <p className="text-dim text-xs mt-4">AI rewriting is off by default and stays off until you enable it.</p>
         </div>
       </section>
 
@@ -358,12 +358,8 @@ export default function Landing({ navigate }: LandingProps) {
             <Zap size={14} className="text-teal" fill="#00C9A7" />
             <span className="text-white/60 text-sm font-display font-semibold">ResumeATS Pro</span>
           </div>
-          <p className="text-white/30 text-xs">© 2026 ResumeATS Pro. Built for job seekers, by engineers who've been there.</p>
-          <div className="flex items-center gap-4">
-            {["GH", "X", "in"].map((s, i) => (
-              <button key={i} className="text-white/30 hover:text-white/60 transition-colors text-xs font-code font-medium">{s}</button>
-            ))}
-          </div>
+          <p className="text-white/30 text-xs">© 2026 ResumeATS Pro. ATS resume analysis with reviewable suggestions.</p>
+          <span className="text-white/20 text-xs font-code">v1.0</span>
         </div>
       </footer>
     </div>

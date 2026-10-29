@@ -71,7 +71,7 @@ export default function Navbar({ currentPage, navigate, onLogout }: NavbarProps)
               <div className="absolute right-0 top-full mt-1.5 w-52 bg-surface rounded-xl border border-edge py-1.5 z-50" style={{ boxShadow: "0 8px 24px rgba(27,42,74,0.12)" }}>
                 <div className="px-4 py-2 border-b border-edge mb-1">
                   <p className="text-xs font-medium text-navy">alex@techcorp.io</p>
-                  <p className="text-[11px] text-mid">Free Plan</p>
+                  <p className="text-[11px] text-mid">Account</p>
                 </div>
                 <button
                   onClick={() => { navigate("settings"); setOpen(false) }}

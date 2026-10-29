@@ -134,7 +134,7 @@ export default function Auth({ mode, navigate, onLogin }: AuthProps) {
           <p className="text-white/50 text-sm leading-relaxed mb-8">
             {isLogin
               ? "Sign in to access your resume analysis dashboard and continue optimizing for your dream role."
-              : "Join 12,400+ job seekers using ResumeATS Pro to get past ATS filters and land more interviews."}
+              : "Create an account to score your resume against a real job description and review every suggested change before it is applied."}
           </p>
           <div className="space-y-3">
             {benefits.map((b, i) => (
@@ -149,16 +149,16 @@ export default function Auth({ mode, navigate, onLogin }: AuthProps) {
         </div>
 
         <div className="relative rounded-2xl p-5" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
-          <p className="text-white/70 text-sm leading-relaxed italic mb-3">
-            "I was applying to 40+ jobs with zero callbacks. After fixing my resume with ResumeATS Pro, I got 3 interviews in the first week."
+          <p className="text-white/70 text-sm leading-relaxed mb-3">
+            AI rewriting is off until you enable it. When it runs, you see exactly what would be sent — flagged bullets, the target job title, and skill names — and nothing changes without your approval.
           </p>
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-full bg-teal/20 flex items-center justify-center">
-              <span className="text-teal text-xs font-bold font-display">MJ</span>
+              <CheckCircle size={14} className="text-teal" />
             </div>
             <div>
-              <p className="text-white text-sm font-semibold">Marcus Johnson</p>
-              <p className="text-white/40 text-xs">Software Engineer · Now at Stripe</p>
+              <p className="text-white text-sm font-semibold">Private by default</p>
+              <p className="text-white/40 text-xs">Your resume stays yours</p>
             </div>
           </div>
         </div>
