@@ -21,6 +21,7 @@ from app.export.docx_exporter import DocxExporter
 from app.export.pdf_exporter import PdfExporter
 from app.export.content import ResumeContentBuilder
 from app.common.exceptions import AnalysisNotFoundError, JobNotFoundError, ResumeNotFoundError, VersionNotFoundError
+from app.analyzer.claim_guard import validate_skills_rewrite
 from app.common.skills import is_soft_skill
 
 # C6: rewrites are applied only after the user accepts them. An unfilled
@@ -28,6 +29,8 @@ from app.common.skills import is_soft_skill
 # them too, but blocking at review time lets us tell the user why.
 _PLACEHOLDER_RE = re.compile(r"\[[^\]]{1,30}\]")
 MAX_REWRITE_CHARS = 600
+# C7: summary/skills suggestions are longer than a bullet but still bounded.
+MAX_SECTION_REWRITE_CHARS = 4000
 
 # How many flagged bullets we'll attempt to send for AI rewriting per analysis.
 # AIRewriter.MAX_BULLETS_PER_CALL caps what actually goes in the API request;
@@ -233,6 +236,18 @@ class ResumeService:
             if not b["has_metrics"] or b["verb_type"] == "weak"
         ][:MAX_BULLETS_TO_REWRITE]
 
+        # C7: the summary and skills section can be tailored too. They are only
+        # sent when the user has opted into AI rewriting (E4) and the server
+        # allows it. Skills are reorganized, never added to.
+        summary_raw = (sections.get("summary") or {}).get("raw") or ""
+        skills_raw = (sections.get("skills") or {}).get("raw") or ""
+        skills_parsed = sections.get("skills_parsed") or []
+        section_targets: list[str] = []
+        if summary_raw.strip():
+            section_targets.append("summary")
+        if skills_raw.strip() and skills_parsed:
+            section_targets.append("skills")
+
         # E4: AI rewriting is opt-out. Resume text may only leave the machine
         # when the server switch is on AND the user asked for it. The rest of
         # the analysis (ATS, bullets, keywords, grammar) is always local.
@@ -241,11 +256,13 @@ class ResumeService:
             "reason": "no_flagged_bullets",
             "flagged_bullets": len(flagged),
             "bullets_sent": 0,
+            "sections_sent": [],
             "provider": None,
             "model": None,
         }
         rewritten: dict = {}
-        if flagged:
+        section_rewrites: dict = {}
+        if flagged or section_targets:
             if not get_settings().ai_rewriting_enabled:
                 ai_info["reason"] = "disabled_by_server"
             elif not use_ai:
@@ -254,17 +271,38 @@ class ResumeService:
                 # No key configured: the rewriter would only return fallbacks.
                 ai_info["reason"] = "not_configured"
             else:
-                rewritten = self.ai.rewrite_bullets(
-                    flagged,
-                    target_role=target_role,
-                    matched_keywords=kw_res.get("matched_keywords", []),
-                    missing_keywords=kw_res.get("missing_keywords", []),
-                )
+                if flagged:
+                    rewritten = self.ai.rewrite_bullets(
+                        flagged,
+                        target_role=target_role,
+                        matched_keywords=kw_res.get("matched_keywords", []),
+                        missing_keywords=kw_res.get("missing_keywords", []),
+                    )
+                if "summary" in section_targets:
+                    result = self.ai.rewrite_summary(
+                        summary_raw,
+                        target_role=target_role,
+                        matched_keywords=kw_res.get("matched_keywords", []),
+                        missing_keywords=kw_res.get("missing_keywords", []),
+                    )
+                    if isinstance(result, dict) and result:
+                        section_rewrites["summary"] = result
+                if "skills" in section_targets:
+                    result = self.ai.rewrite_skills(
+                        skills_raw,
+                        skills_parsed,
+                        target_role=target_role,
+                        matched_keywords=kw_res.get("matched_keywords", []),
+                        missing_keywords=kw_res.get("missing_keywords", []),
+                    )
+                    if isinstance(result, dict) and result:
+                        section_rewrites["skills"] = result
                 ai_info.update({
                     "enabled": True,
                     "reason": "ran",
                     # MAX_BULLETS_PER_CALL caps what actually goes in the request.
                     "bullets_sent": min(len(flagged), MAX_BULLETS_PER_CALL),
+                    "sections_sent": section_targets,
                     "provider": self._ai_name("provider"),
                     "model": self._ai_name("model"),
                 })
@@ -292,6 +330,8 @@ class ResumeService:
                 "keyword_analysis": kw_res,
                 "grammar": grammar_res,
                 "ai_rewritten_examples": rewritten,
+                # C7: summary/skills suggestions, reviewed separately from bullets.
+                "ai_section_rewrites": section_rewrites,
                 # E4: what happened to the AI step, so the UI can say whether
                 # any resume text left the machine and why.
                 "ai_rewriting": ai_info,
@@ -431,14 +471,32 @@ class ResumeService:
         report = analysis.report or {}
         sections = resume.parsed_data.get("sections", {}) or {}
         accepted = self._decided_rewrites(report)
+        section_rewrites = self._decided_section_rewrites(report)
         confirmed = report.get("confirmed_keywords", []) or []
-        tailored_sections = self._tailored_sections(sections, accepted)
+        tailored_sections = self._tailored_sections(
+            sections, accepted, section_rewrites
+        )
 
         job_title = None
         if analysis.job_id:
             job = self.session.get(JobDescription, analysis.job_id)
             if job:
                 job_title = job.title
+
+        changes = [
+            {"original": original, "tailored": replacement}
+            for original, replacement in accepted.items()
+            if self._rewrite_is_in_sections(original, sections)
+        ]
+        # A summary is a single display line, so its change can be highlighted
+        # exactly like a bullet. Skills are regrouped, not line-for-line
+        # rewritten, so the tailored side shows them without a fake highlight.
+        summary_original = (sections.get("summary") or {}).get("raw") or ""
+        if "summary" in section_rewrites and summary_original.strip():
+            changes.append({
+                "original": self.content.summary_text(summary_original),
+                "tailored": self.content.summary_text(section_rewrites["summary"]),
+            })
 
         return {
             "resume_id": str(resume_id),
@@ -448,11 +506,7 @@ class ResumeService:
             "tailored": self._comparison_view(
                 tailored_sections, confirmed, accepted
             ),
-            "changes": [
-                {"original": original, "tailored": replacement}
-                for original, replacement in accepted.items()
-                if self._rewrite_is_in_sections(original, sections)
-            ],
+            "changes": changes,
             "confirmed_keywords": self._exported_confirmed_keywords(
                 sections, confirmed
             ),
@@ -614,6 +668,7 @@ class ResumeService:
 
         confirmed_keywords: list[str] = []
         rewritten_bullets: dict[str, str] = {}
+        section_rewrites: dict[str, str] = {}
         target_role = ""
 
         if analysis and analysis.report:
@@ -624,6 +679,8 @@ class ResumeService:
             # A fresh analysis applies none: the original bullets are exported
             # until the user reviews the suggestions.
             rewritten_bullets = self._decided_rewrites(analysis.report)
+            # C7: same rule for the summary and skills sections.
+            section_rewrites = self._decided_section_rewrites(analysis.report)
 
             # Fetch the job title. A4: it is only used when the caller asks for
             # it (match_title) — by default the export keeps the resume's own
@@ -633,8 +690,14 @@ class ResumeService:
                 if job:
                     target_role = job.title
 
+        sections = resume.parsed_data.get("sections", {}) or {}
+        if section_rewrites:
+            # The exporters already know how to render summary/skills raw text;
+            # replace it before they see it so DOCX and PDF stay identical.
+            sections = self._tailored_sections(sections, {}, section_rewrites)
+
         return (
-            resume.parsed_data.get("sections", {}) or {},
+            sections,
             confirmed_keywords,
             rewritten_bullets,
             target_role,
@@ -891,6 +954,124 @@ class ResumeService:
         self.session.refresh(analysis)
         return merged, len(self._decided_rewrites(analysis.report))
 
+    def confirm_section_rewrites(
+        self,
+        resume_id: UUID,
+        analysis_id: UUID,
+        user_id: UUID,
+        decisions: list,
+    ) -> tuple[dict, int]:
+        """C7: store the user's review of the summary/skills suggestions.
+
+        A summary can be edited freely (it is the candidate's own text). A
+        skills edit is re-validated against the resume's parsed skills so an
+        edit can never smuggle in a skill the resume does not list.
+        """
+        resume = self.session.get(Resume, resume_id)
+        if not resume or resume.user_id != user_id:
+            raise ResumeNotFoundError()
+        analysis = self.session.get(ResumeAnalysis, analysis_id)
+        if not analysis or analysis.resume_id != resume_id:
+            raise AnalysisNotFoundError()
+
+        examples = (analysis.report or {}).get("ai_section_rewrites") or {}
+        suggestions = {
+            section: opt for section, opt in examples.items()
+            if isinstance(opt, dict)
+        }
+        skills_inventory = (
+            (resume.parsed_data.get("sections", {}) or {}).get("skills_parsed", [])
+            or []
+        )
+
+        updates: dict[str, dict | None] = {}
+        unknown: list[str] = []
+        invalid: list[str] = []
+        for item in decisions:
+            if not isinstance(item, dict):
+                raise HTTPException(
+                    status_code=400, detail="Each decision must be an object"
+                )
+            section = str(item.get("section") or "").strip().lower()
+            action = str(item.get("action") or "").strip().lower()
+            if section not in ("summary", "skills"):
+                unknown.append(section or "(missing section)")
+                continue
+            if section not in suggestions:
+                unknown.append(section)
+                continue
+            if action == "pending":
+                updates[section] = None
+                continue
+            if action not in ("accepted", "rejected"):
+                invalid.append(
+                    f"{section}: action must be 'accepted', 'rejected' or 'pending'"
+                )
+                continue
+            if action == "rejected":
+                updates[section] = {"action": "rejected", "text": ""}
+                continue
+
+            text = str(item.get("text") or "").strip()
+            if not text:
+                text = str(suggestions[section].get("ai_output") or "").strip()
+            placeholder = _PLACEHOLDER_RE.search(text)
+            if placeholder:
+                invalid.append(
+                    f"{section}: fill in the {placeholder.group(0)} placeholder "
+                    "before accepting this rewrite"
+                )
+                continue
+            if not text:
+                invalid.append(f"{section}: there is no rewrite text to accept")
+                continue
+            if len(text) > MAX_SECTION_REWRITE_CHARS:
+                invalid.append(
+                    f"{section}: rewrite is too long "
+                    f"(max {MAX_SECTION_REWRITE_CHARS} characters)"
+                )
+                continue
+            if section == "skills":
+                reasons = validate_skills_rewrite(
+                    skills_inventory, text.splitlines()
+                )
+                if reasons:
+                    invalid.append(
+                        "skills: " + "; ".join(reasons)
+                    )
+                    continue
+            updates[section] = {"action": "accepted", "text": text}
+
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Not an AI section rewrite in this analysis: "
+                    + ", ".join(unknown)
+                ),
+            )
+        if invalid:
+            raise HTTPException(status_code=400, detail="; ".join(invalid))
+        if not updates:
+            raise HTTPException(
+                status_code=400, detail="No section decisions to save"
+            )
+
+        report = analysis.report or {}
+        merged = {
+            key: value
+            for key, value in {
+                **(report.get("section_decisions") or {}),
+                **updates,
+            }.items()
+            if value is not None
+        }
+        analysis.report = {**report, "section_decisions": merged}
+        self.session.add(analysis)
+        self.session.commit()
+        self.session.refresh(analysis)
+        return merged, len(self._decided_section_rewrites(analysis.report))
+
     # ------------------------------------------------------------------ #
     # D3: per-job tailored resume versions
     # ------------------------------------------------------------------ #
@@ -906,11 +1087,41 @@ class ResumeService:
         return cls._decided_rewrites(report)
 
     @classmethod
-    def _tailored_sections(cls, sections: dict, applied: dict[str, str]) -> dict:
+    def _decided_section_rewrites(cls, report: dict) -> dict[str, str]:
+        """C7: accepted summary/skills text, ready for the exporter."""
+        decisions = report.get("section_decisions") or {}
+        out: dict[str, str] = {}
+        for section in ("summary", "skills"):
+            decision = decisions.get(section)
+            if not isinstance(decision, dict):
+                continue
+            if decision.get("action") != "accepted":
+                continue
+            text = str(decision.get("text") or "").strip()
+            if not text or _PLACEHOLDER_RE.search(text):
+                continue
+            out[section] = text
+        return out
+
+    @classmethod
+    def _tailored_sections(
+        cls,
+        sections: dict,
+        applied: dict[str, str],
+        section_rewrites: dict[str, str] | None = None,
+    ) -> dict:
         """Apply rewrites to every shape a section can take: raw strings
         ({"experience": {"raw": ...}}) and parsed bullet lists
         ({"experience_parsed": [{...bullets}]})."""
         tailored = {**sections}
+        if section_rewrites:
+            for section, text in section_rewrites.items():
+                if section in ("summary", "skills"):
+                    block = tailored.get(section)
+                    tailored[section] = {
+                        **(block if isinstance(block, dict) else {}),
+                        "raw": text,
+                    }
         for key in ("experience", "projects"):
             block = tailored.get(key)
             if isinstance(block, dict) and block.get("raw"):
@@ -937,9 +1148,10 @@ class ResumeService:
             raise AnalysisNotFoundError()
 
         applied = self._applied_rewrites_from_report(analysis.report or {})
-        if not applied:
-            # Honesty: a "tailored version" with zero changed bullets would be
-            # an identical copy -- nothing to store. C6: rewrites only count
+        section_rewrites = self._decided_section_rewrites(analysis.report or {})
+        if not applied and not section_rewrites:
+            # Honesty: a "tailored version" with zero changed sections would be
+            # an identical copy -- nothing to store. C6/C7: rewrites only count
             # once the user accepts them.
             raise HTTPException(
                 status_code=400,
@@ -950,9 +1162,16 @@ class ResumeService:
                 ),
             )
 
+        sections = resume.parsed_data.get("sections", {}) or {}
         tailored_text = resume.raw_text
         for orig, repl in applied.items():
             tailored_text = self._replace_bullet_text(tailored_text, orig, repl)
+        for section, text in section_rewrites.items():
+            original = (sections.get(section) or {}).get("raw")
+            if original:
+                tailored_text = self._replace_bullet_text(
+                    tailored_text, original, text
+                )
 
         job = self.session.get(JobDescription, analysis.job_id) if analysis.job_id else None
         label = f"Tailored for {job.title}" if job else "Tailored version"
@@ -966,12 +1185,20 @@ class ResumeService:
             )
         ).first()
 
+        stored_rewrites = {
+            **applied,
+            **{f"__{section}__": text for section, text in section_rewrites.items()},
+        }
+        tailored_sections = self._tailored_sections(
+            sections, applied, section_rewrites
+        )
+
         if existing:
             existing.analysis_id = analysis.id
             existing.label = label
             existing.raw_text = tailored_text
-            existing.parsed_data = {"sections": self._tailored_sections(resume.parsed_data.get("sections", {}), applied)}
-            existing.applied_rewrites = applied
+            existing.parsed_data = {"sections": tailored_sections}
+            existing.applied_rewrites = stored_rewrites
             existing.created_at = datetime.now(timezone.utc)
             self.session.add(existing)
             self.session.commit()
@@ -984,8 +1211,8 @@ class ResumeService:
             analysis_id=analysis.id,
             label=label,
             raw_text=tailored_text,
-            parsed_data={"sections": self._tailored_sections(resume.parsed_data.get("sections", {}), applied)},
-            applied_rewrites=applied,
+            parsed_data={"sections": tailored_sections},
+            applied_rewrites=stored_rewrites,
         )
         self.session.add(version)
         self.session.commit()

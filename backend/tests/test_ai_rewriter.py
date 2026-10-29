@@ -426,5 +426,162 @@ class PromptContentTests(unittest.TestCase):
         self.assertIn("Backend Dev", sent_prompt)
 
 
+class SummaryRewriteTests(unittest.TestCase):
+    """C7: the professional summary is rewritten under the same claim guard."""
+
+    ORIGINAL = "Backend developer who builds APIs with Python."
+
+    def test_clean_summary_passes_in_one_call(self):
+        r, fake_client = make_rewriter_with_fake_client(
+            responses="Backend developer who builds reliable APIs with Python."
+        )
+        result = r.rewrite_summary(self.ORIGINAL)
+
+        self.assertEqual(fake_client.chat.completions.create.call_count, 1)
+        self.assertEqual(
+            result["ai_output"],
+            "Backend developer who builds reliable APIs with Python.",
+        )
+        self.assertEqual(result["source"], "openai")
+        self.assertEqual(result["guard"]["status"], "passed")
+        self.assertEqual(result["original"], self.ORIGINAL)
+
+    def test_new_number_is_rejected_then_retried(self):
+        bad = "Backend developer who builds 12 APIs with Python."
+        good = "Backend developer who builds APIs with Python."
+        r, fake_client = make_rewriter_with_fake_client(responses=[bad, good])
+        result = r.rewrite_summary(self.ORIGINAL)
+
+        self.assertEqual(fake_client.chat.completions.create.call_count, 2)
+        self.assertEqual(result["guard"]["status"], "retried_passed")
+        self.assertTrue(result["guard"]["retried"])
+        self.assertEqual(result["ai_output"], good)
+        retry_prompt = (
+            fake_client.chat.completions.create.call_args_list[1]
+            .kwargs["messages"][1]["content"]
+        )
+        self.assertIn("12", retry_prompt)
+
+    def test_two_rejections_withhold_the_suggestion(self):
+        bad = "Backend developer who builds APIs with Python and Kubernetes."
+        r, fake_client = make_rewriter_with_fake_client(responses=[bad, bad])
+        result = r.rewrite_summary(self.ORIGINAL)
+
+        self.assertEqual(fake_client.chat.completions.create.call_count, 2)
+        self.assertEqual(result["ai_output"], self.ORIGINAL)
+        self.assertEqual(result["source"], "guard_rejected")
+        self.assertEqual(result["guard"]["status"], "rejected")
+        self.assertTrue(result["guard"]["reasons"])
+
+    def test_provider_error_returns_original_without_a_suggestion(self):
+        r, _ = make_rewriter_with_fake_client(raise_exc=RuntimeError("network down"))
+        result = r.rewrite_summary(self.ORIGINAL)
+
+        self.assertEqual(result["ai_output"], self.ORIGINAL)
+        self.assertEqual(result["source"], "fallback")
+        self.assertEqual(result["guard"]["status"], "ai_error")
+        self.assertIn("network down", result["error"])
+
+    def test_no_client_skips_the_section(self):
+        r = AIRewriter.__new__(AIRewriter)
+        r.provider = "groq"
+        r.model = "x"
+        r.client = None
+
+        result = r.rewrite_summary(self.ORIGINAL)
+        self.assertEqual(result["source"], "fallback")
+        self.assertEqual(result["guard"]["status"], "skipped")
+
+    def test_empty_summary_is_not_rewritten(self):
+        r, fake_client = make_rewriter_with_fake_client(responses="anything")
+        self.assertEqual(r.rewrite_summary("   "), {})
+        fake_client.chat.completions.create.assert_not_called()
+
+
+class SkillsRewriteTests(unittest.TestCase):
+    """C7: skills may only be regrouped/reordered, never changed."""
+
+    INVENTORY = ["Python", "Docker", "SQL"]
+
+    def test_valid_regrouping_passes(self):
+        response = json.dumps({
+            "lines": ["Languages: Python, SQL", "Tools: Docker"],
+        })
+        r, fake_client = make_rewriter_with_fake_client(responses=response)
+        result = r.rewrite_skills("Python\nDocker\nSQL", self.INVENTORY)
+
+        self.assertEqual(fake_client.chat.completions.create.call_count, 1)
+        self.assertEqual(result["guard"]["status"], "passed")
+        self.assertEqual(
+            result["lines"], ["Languages: Python, SQL", "Tools: Docker"]
+        )
+        self.assertEqual(result["ai_output"], "Languages: Python, SQL\nTools: Docker")
+
+    def test_added_skill_is_rejected(self):
+        bad = json.dumps({"lines": ["Languages: Python, SQL", "Tools: Docker, Kubernetes"]})
+        r, fake_client = make_rewriter_with_fake_client(responses=[bad, bad])
+        result = r.rewrite_skills("Python\nDocker\nSQL", self.INVENTORY)
+
+        self.assertEqual(fake_client.chat.completions.create.call_count, 2)
+        self.assertEqual(result["source"], "guard_rejected")
+        self.assertEqual(result["guard"]["status"], "rejected")
+        self.assertEqual(result["ai_output"], "Python\nDocker\nSQL")
+        self.assertTrue(any("Kubernetes" in reason for reason in result["guard"]["reasons"]))
+
+    def test_dropped_skill_is_rejected(self):
+        bad = json.dumps({"lines": ["Languages: Python, SQL"]})
+        r, fake_client = make_rewriter_with_fake_client(responses=[bad, bad])
+        result = r.rewrite_skills("Python\nDocker\nSQL", self.INVENTORY)
+
+        self.assertEqual(result["guard"]["status"], "rejected")
+        self.assertTrue(any("Docker" in reason for reason in result["guard"]["reasons"]))
+
+    def test_numbers_and_placeholders_are_rejected(self):
+        numbered = json.dumps({"lines": ["Languages: Python, SQL, 3 more"]})
+        r, _ = make_rewriter_with_fake_client(responses=[numbered, numbered])
+        self.assertEqual(
+            r.rewrite_skills("Python\nDocker\nSQL", self.INVENTORY)["guard"]["status"],
+            "rejected",
+        )
+
+        placeholder = json.dumps({"lines": ["Languages: Python, [Skill]"]})
+        r, _ = make_rewriter_with_fake_client(responses=[placeholder, placeholder])
+        self.assertEqual(
+            r.rewrite_skills("Python\nDocker\nSQL", self.INVENTORY)["guard"]["status"],
+            "rejected",
+        )
+
+    def test_retry_can_recover(self):
+        bad = json.dumps({"lines": ["Languages: Python, SQL", "Tools: Docker, Kubernetes"]})
+        good = json.dumps({"lines": ["Tools: Docker", "Languages: Python, SQL"]})
+        r, fake_client = make_rewriter_with_fake_client(responses=[bad, good])
+        result = r.rewrite_skills("Python\nDocker\nSQL", self.INVENTORY)
+
+        self.assertEqual(fake_client.chat.completions.create.call_count, 2)
+        self.assertEqual(result["guard"]["status"], "retried_passed")
+        self.assertEqual(result["lines"], ["Tools: Docker", "Languages: Python, SQL"])
+
+    def test_plain_text_lines_are_accepted_as_a_fallback_shape(self):
+        r, _ = make_rewriter_with_fake_client(
+            responses="Languages: Python, SQL\nTools: Docker"
+        )
+        result = r.rewrite_skills("Python\nDocker\nSQL", self.INVENTORY)
+        self.assertEqual(result["lines"], ["Languages: Python, SQL", "Tools: Docker"])
+
+    def test_skill_names_with_versions_are_allowed(self):
+        inventory = ["Python 3", "S3", "Docker"]
+        response = json.dumps({
+            "lines": ["Languages: Python 3, S3", "Tools: Docker"],
+        })
+        r, _ = make_rewriter_with_fake_client(responses=response)
+        result = r.rewrite_skills("Python 3\nS3\nDocker", inventory)
+        self.assertEqual(result["guard"]["status"], "passed")
+
+    def test_no_parsed_skills_means_nothing_to_rewrite(self):
+        r, fake_client = make_rewriter_with_fake_client(responses="anything")
+        self.assertEqual(r.rewrite_skills("", []), {})
+        fake_client.chat.completions.create.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

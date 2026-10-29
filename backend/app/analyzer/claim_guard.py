@@ -214,3 +214,72 @@ def describe_violations(violations: list[tuple[str, list[str]]]) -> str:
         else:
             parts.append(template)
     return "; ".join(parts) or "violated the rewrite guard"
+
+
+def _clean_skill_token(token: str) -> str:
+    return re.sub(r"\s+", " ", token).strip().strip(".;").strip()
+
+
+def validate_skills_rewrite(
+    original_skills: list[str], lines: list[str]
+) -> list[str]:
+    """C7: a skills rewrite may only reorganize the skills already listed.
+
+    Every comma-separated item must match one of ``original_skills`` (case-
+    insensitive), and every original skill must still be present. Category
+    labels before a colon are free-form, but numbers and placeholders are
+    never allowed. Returns human-readable reasons; an empty list means valid.
+
+    Numbers inside a skill are allowed when the resume itself lists that skill
+    (for example "Python 3" or "S3"): the token match below is what decides.
+    """
+    reasons: list[str] = []
+    if not lines:
+        return ["returned an empty skills section"]
+
+    lookup = {_clean_skill_token(skill).lower(): _clean_skill_token(skill)
+              for skill in original_skills if _clean_skill_token(skill)}
+    if not lookup:
+        return ["there are no parsed skills to reorganize"]
+
+    found: list[str] = []
+    for raw_line in lines:
+        line = re.sub(r"^[\s•▪▸►◆○●*\-]+", "", str(raw_line)).strip()
+        if not line:
+            reasons.append("returned an empty line")
+            continue
+        if PLACEHOLDER_PATTERN.search(line):
+            reasons.append("contains placeholders")
+            continue
+
+        body = line
+        if ":" in body:
+            label, _, body = body.partition(":")
+            if not label.strip():
+                reasons.append("has an empty category label")
+                continue
+            if _DIGIT_GROUP_RE.search(label):
+                reasons.append("adds numbers or quantities")
+                continue
+
+        tokens = [
+            _clean_skill_token(token)
+            for token in body.split(",")
+            if _clean_skill_token(token)
+        ]
+        if not tokens:
+            reasons.append(f"has no skills on the line {line!r}")
+            continue
+        for token in tokens:
+            if token.lower() not in lookup:
+                reasons.append(f"adds or changes a skill: {token}")
+            else:
+                found.append(token.lower())
+
+    missing = [original for key, original in lookup.items() if key not in set(found)]
+    if missing:
+        reasons.append("would drop skills: " + ", ".join(missing))
+
+    # De-duplicate while preserving order; the same problem should not appear
+    # five times just because a skill was repeated on several lines.
+    return list(dict.fromkeys(reasons))

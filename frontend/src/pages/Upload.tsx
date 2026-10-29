@@ -54,7 +54,7 @@ export default function UploadPage({ navigate, addToast }: PageProps) {
     setAiEnabled(next)
     api.setAiRewritingPreference(next)
     addToast("info", next
-      ? "AI rewriting on — flagged bullets will be sent to your AI provider."
+      ? "AI rewriting on — flagged bullets, your summary, and skill names will be sent to your AI provider."
       : "AI rewriting off — analyses will stay on this machine.")
   }
 
@@ -193,7 +193,7 @@ export default function UploadPage({ navigate, addToast }: PageProps) {
                 </p>
                 <p className="text-xs text-mid leading-relaxed mt-0.5">
                   {serverAiEnabled
-                    ? "When on, up to 8 flagged bullet lines, the target job title, and skill names are sent to your configured AI provider. Your contact details and the rest of the resume are not. ATS, keyword, bullet, and grammar checks always run locally."
+                    ? "When on, up to 8 flagged bullet lines, your professional summary, the skills you already list, the target job title, and job skill names are sent to your configured AI provider. Your contact details and the rest of the resume are not. ATS, keyword, bullet, and grammar checks always run locally."
                     : "This instance is configured to keep all resume text on this machine. Analysis still runs locally; AI rewrite suggestions are skipped."}
                   {serverAiEnabled && (
                     <>

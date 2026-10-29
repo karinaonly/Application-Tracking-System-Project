@@ -69,6 +69,21 @@ export interface ResumeVersionSummary {
   created_at: string
 }
 
+// C7: the AI's summary/skills suggestion. When the claim guard rejects a
+// suggestion it is withheld entirely; `ai_output` then stays equal to the original.
+export interface SectionRewrite {
+  original: string
+  ai_output: string
+  moderate?: string
+  aggressive?: string
+  lines?: string[]
+  source?: string
+  error?: string
+  guard?: { status: string; reasons: string[]; retried: boolean }
+}
+
+export type SectionDecision = { action: "accepted" | "rejected"; text?: string }
+
 export interface ResumeAnalysis {
   id: string
   resume_id: string
@@ -127,6 +142,9 @@ export interface ResumeAnalysis {
     rewrite_decisions?: Record<string, { action: "accepted" | "rejected"; text?: string }>
     grammar?: { score?: number; typos_found?: Array<{ word: string; suggestion: string }> }
     ai_rewritten_examples?: Record<string, string | { moderate?: string; aggressive?: string; ai_output?: string; source?: string; error?: string; guard?: { status: string; reasons: string[]; retried: boolean; rejected_variants?: string[] } }>
+    // C7: summary/skills suggestions, reviewed separately from bullets.
+    ai_section_rewrites?: Record<string, SectionRewrite>
+    section_decisions?: Record<string, SectionDecision>
     // E4: what happened to the AI step. `reason` is "ran", "disabled_by_user",
     // "disabled_by_server", "not_configured", or "no_flagged_bullets".
     ai_rewriting?: {
@@ -134,6 +152,8 @@ export interface ResumeAnalysis {
       reason: "ran" | "disabled_by_user" | "disabled_by_server" | "not_configured" | "no_flagged_bullets"
       flagged_bullets: number
       bullets_sent: number
+      // C7: which sections ("summary", "skills") were sent to the provider.
+      sections_sent?: string[]
       provider: string | null
       model: string | null
     }
@@ -394,6 +414,26 @@ export async function saveRewriteDecisions(
     rewrite_decisions: Record<string, { action: "accepted" | "rejected"; text?: string }>
     applied: number
   }>(`/resumes/${resumeId}/analyses/${analysisId}/rewrite-decisions`, {
+    method: "POST",
+    body: JSON.stringify({ decisions }),
+  })
+}
+
+// C7: review the summary/skills suggestions. Same rule as bullets: only
+// accepted (or edited) text reaches the export. A skills edit is re-validated
+// by the backend against the resume's parsed skills.
+export async function saveSectionDecisions(
+  resumeId: string,
+  analysisId: string,
+  decisions: Array<{ section: "summary" | "skills"; action: "accepted" | "rejected" | "pending"; text?: string }>
+): Promise<{
+  section_decisions: Record<string, SectionDecision>
+  applied: number
+}> {
+  return request<{
+    section_decisions: Record<string, SectionDecision>
+    applied: number
+  }>(`/resumes/${resumeId}/analyses/${analysisId}/section-decisions`, {
     method: "POST",
     body: JSON.stringify({ decisions }),
   })

@@ -4,7 +4,11 @@ import re
 
 from openai import OpenAI
 from app.analyzer.ai_config import resolve_ai_config
-from app.analyzer.claim_guard import check_rewrite, describe_violations
+from app.analyzer.claim_guard import (
+    check_rewrite,
+    describe_violations,
+    validate_skills_rewrite,
+)
 from app.config.settings import get_settings
 
 # Hard cap on how many bullets go into a single rewrite request. Keeps the prompt/response
@@ -296,6 +300,299 @@ class AIRewriter:
             lines.append(f"{i}. {b}")
         return "\n".join(lines)
 
+    # ------------------------------------------------------------------ #
+    # C7: summary and skills rewrites
+    # ------------------------------------------------------------------ #
+    _SECTION_LABELS = {
+        "placeholder": "contains placeholders",
+        "new_number": "adds numbers or quantities not in the original",
+        "new_skill": "claims skills not in the original",
+        "new_proper_noun": "adds names or tools not in the original",
+        "claim_word": "uses claim words not in the original",
+    }
+
+    @staticmethod
+    def _section_result(
+        original: str,
+        text: str,
+        source: str,
+        status: str,
+        *,
+        reasons: list[str] | None = None,
+        retried: bool = False,
+        error: str | None = None,
+    ) -> dict:
+        out = {
+            "original": original,
+            "ai_output": text,
+            "moderate": text,
+            "aggressive": text,
+            "keywords_used": [],
+            "source": source,
+            "guard": {
+                "status": status,
+                "reasons": reasons or [],
+                "retried": retried,
+            },
+        }
+        if error:
+            out["error"] = error
+        return out
+
+    def _section_reasons(self, original: str, rewrite: str) -> list[str]:
+        reasons = []
+        for code, details in check_rewrite(original, rewrite):
+            # verb_inflation is a bullet-lead-verb rule; prose summaries are
+            # checked by the claim/name/number rules instead.
+            if code == "verb_inflation":
+                continue
+            label = self._SECTION_LABELS.get(code, code)
+            if details:
+                label += ": " + ", ".join(str(detail) for detail in details)
+            reasons.append(label)
+        return list(dict.fromkeys(reasons))
+
+    def rewrite_summary(
+        self,
+        summary: str,
+        target_role: str = "",
+        matched_keywords: list[str] | None = None,
+        missing_keywords: list[str] | None = None,
+    ) -> dict:
+        """C7: rewrite the professional summary without adding claims."""
+        original = (summary or "").strip()
+        if not original:
+            return {}
+        if not self.client:
+            return self._section_result(original, original, "fallback", "skipped")
+
+        base_prompt = self._build_summary_prompt(
+            original, target_role, matched_keywords or [], missing_keywords or []
+        )
+        prompt = base_prompt
+        attempts: list[tuple[str, list[str]]] = []
+        retried = False
+        error: str | None = None
+        for attempt in range(2):
+            text, error = self.generate_text(
+                self._summary_system_prompt(),
+                prompt,
+                temperature=0.4,
+                max_tokens=400,
+            )
+            if error:
+                break
+            text = _normalize_glyphs((text or "").strip())
+            reasons = self._section_reasons(original, text)
+            attempts.append((text, reasons))
+            if not reasons:
+                break
+            if attempt == 0:
+                retried = True
+                prompt = (
+                    base_prompt
+                    + "\n\nYour previous rewrite was rejected because it "
+                    + "; ".join(reasons)
+                    + ". Rewrite it using only facts, tools, numbers, and wording "
+                    "already present in the original summary."
+                )
+
+        if not attempts:
+            return self._section_result(
+                original, original, "fallback", "ai_error", error=error
+            )
+        text, reasons = attempts[-1]
+        if reasons:
+            return self._section_result(
+                original,
+                original,
+                "guard_rejected",
+                "retry_failed" if error else "rejected",
+                reasons=reasons,
+                retried=retried,
+                error=error,
+            )
+        return self._section_result(
+            original,
+            text,
+            self.provider,
+            "retried_passed" if retried else "passed",
+            retried=retried,
+        )
+
+    def rewrite_skills(
+        self,
+        skills_text: str,
+        skills: list[str],
+        target_role: str = "",
+        matched_keywords: list[str] | None = None,
+        missing_keywords: list[str] | None = None,
+    ) -> dict:
+        """C7: reorganize the skills section without adding or dropping any."""
+        inventory = [str(skill).strip() for skill in skills if str(skill).strip()]
+        original = (skills_text or "").strip()
+        if not inventory:
+            return {}
+        if not self.client:
+            return self._section_result(original, original, "fallback", "skipped")
+
+        base_prompt = self._build_skills_prompt(
+            inventory, target_role, matched_keywords or [], missing_keywords or []
+        )
+        prompt = base_prompt
+        attempts: list[tuple[list[str], list[str]]] = []
+        retried = False
+        error: str | None = None
+        for attempt in range(2):
+            text, error = self.generate_text(
+                self._skills_system_prompt(),
+                prompt,
+                temperature=0.2,
+                max_tokens=500,
+            )
+            if error:
+                break
+            lines = self._parse_skill_lines(text)
+            reasons = validate_skills_rewrite(inventory, lines)
+            attempts.append((lines, reasons))
+            if not reasons:
+                break
+            if attempt == 0:
+                retried = True
+                prompt = (
+                    base_prompt
+                    + "\n\nYour previous reorganization was rejected because it "
+                    + "; ".join(reasons)
+                    + ". Use every listed skill exactly once, keep its original "
+                    "spelling, and add nothing."
+                )
+
+        if not attempts:
+            return self._section_result(
+                original, original, "fallback", "ai_error", error=error
+            )
+        lines, reasons = attempts[-1]
+        if reasons:
+            return self._section_result(
+                original,
+                original,
+                "guard_rejected",
+                "retry_failed" if error else "rejected",
+                reasons=reasons,
+                retried=retried,
+                error=error,
+            )
+        rendered = "\n".join(lines)
+        result = self._section_result(
+            original,
+            rendered,
+            self.provider,
+            "retried_passed" if retried else "passed",
+            retried=retried,
+        )
+        result["lines"] = lines
+        return result
+
+    @staticmethod
+    def _parse_skill_lines(content: str) -> list[str]:
+        cleaned = _strip_fences(content)
+        data = None
+        try:
+            data = json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+        if isinstance(data, dict):
+            for key in ("lines", "skills", "items", "results"):
+                if isinstance(data.get(key), list):
+                    data = data[key]
+                    break
+        if isinstance(data, list):
+            return [str(item).strip() for item in data if str(item).strip()]
+        return [line.strip() for line in cleaned.splitlines() if line.strip()]
+
+    @staticmethod
+    def _summary_system_prompt() -> str:
+        return (
+            "You rewrite a resume's professional summary so it is clearer and more "
+            "ATS-friendly, while staying strictly truthful to the original.\n\n"
+            "HARD RULES (never break these):\n"
+            "1. NEVER add a number, percentage, dollar amount, team size, metric, "
+            "employer, job title, degree, certification, tool, or skill that is not "
+            "already in the ORIGINAL summary.\n"
+            "2. Do not inflate seniority or scope (an aspiring developer must not "
+            "become a senior developer; a helper must not become a lead).\n"
+            "3. Do not add placeholders, bracketed values, or guessed facts.\n"
+            "4. Do not use hype words such as world-class, cutting-edge, guaranteed, "
+            "seamless, revolutionary, robust, or scalable unless the original says so.\n"
+            "5. Keep the candidate's real role, focus, and tone.\n"
+            "6. Plain text only: no markdown, no bullet list, no headings. Two to four "
+            "sentences.\n\n"
+            "Return only the rewritten summary."
+        )
+
+    @staticmethod
+    def _skills_system_prompt() -> str:
+        return (
+            "You reorganize a resume's technical skills section for a target job.\n\n"
+            "HARD RULES (never break these):\n"
+            "1. Use ONLY the skills in the provided list. NEVER add, remove, rename, "
+            "merge, split, or invent a skill.\n"
+            "2. Keep every skill's original spelling and capitalization.\n"
+            "3. Every listed skill must appear exactly once.\n"
+            "4. You may reorder skills and group them under short category labels.\n"
+            "5. Do not add numbers, placeholders, or claims.\n\n"
+            'Respond with ONLY JSON: {"lines": ["Category: skill, skill", ...]}. '
+            "No prose, no markdown fences."
+        )
+
+    def _build_summary_prompt(
+        self,
+        summary: str,
+        target_role: str,
+        matched_keywords: list[str],
+        missing_keywords: list[str],
+    ) -> str:
+        lines = ["ORIGINAL SUMMARY", summary]
+        if target_role:
+            lines.extend(["", f"Target role: {target_role}"])
+        if matched_keywords:
+            lines.append(
+                "Skills already evidenced in the resume (safe to reinforce only if "
+                "the original summary already supports them): "
+                + ", ".join(matched_keywords[:20])
+            )
+        if missing_keywords:
+            lines.append(
+                "Skills the job wants that are NOT in the original summary (do NOT "
+                "add them): " + ", ".join(missing_keywords[:20])
+            )
+        lines.extend(["", "Rewrite the summary now, following every hard rule."])
+        return "\n".join(lines)
+
+    def _build_skills_prompt(
+        self,
+        skills: list[str],
+        target_role: str,
+        matched_keywords: list[str],
+        missing_keywords: list[str],
+    ) -> str:
+        lines = ["SKILLS TO REORGANIZE (use every one exactly once):"]
+        lines.append(", ".join(skills))
+        if target_role:
+            lines.extend(["", f"Target role: {target_role}"])
+        if matched_keywords:
+            lines.append(
+                "The job emphasizes these skills you already have (order them first "
+                "where sensible): " + ", ".join(matched_keywords[:20])
+            )
+        if missing_keywords:
+            lines.append(
+                "These are NOT in the list above and must NOT be added: "
+                + ", ".join(missing_keywords[:20])
+            )
+        lines.extend(["", "Return the reorganized skills as JSON now."])
+        return "\n".join(lines)
+
     def generate_text(
         self,
         system_prompt: str,
@@ -304,7 +601,7 @@ class AIRewriter:
         temperature: float = 0.5,
         max_tokens: int = 900,
     ) -> tuple[str | None, str | None]:
-        """Generate plain text (D8: cover letters) with the shared client.
+        """Generate plain text with the shared client.
 
         Returns ``(text, error)``. The error is already redacted of the API key.
         """

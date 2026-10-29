@@ -180,6 +180,25 @@ def save_rewrite_decisions(
     )
     return {"rewrite_decisions": stored, "applied": applied}
 
+@router.post("/{resume_id}/analyses/{analysis_id}/section-decisions")
+def save_section_decisions(
+    resume_id: UUID,
+    analysis_id: UUID,
+    body: dict,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    # C7: summary/skills suggestions are reviewed separately from bullets.
+    # Only accepted (or edited) text reaches an export or a saved version.
+    decisions = body.get("decisions")
+    if not isinstance(decisions, list):
+        raise HTTPException(status_code=400, detail="decisions must be a list")
+    service = ResumeService(session)
+    stored, applied = service.confirm_section_rewrites(
+        resume_id, analysis_id, user.id, decisions
+    )
+    return {"section_decisions": stored, "applied": applied}
+
 @router.post("/{resume_id}/versions", status_code=201)
 def create_version(
     resume_id: UUID,

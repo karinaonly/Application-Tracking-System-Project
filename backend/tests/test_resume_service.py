@@ -1404,5 +1404,386 @@ class ComparisonTests(unittest.TestCase):
             )
 
 
+class SectionRewriteAnalysisTests(unittest.TestCase):
+    """C7: summary/skills are only sent when the user opted in and AI is on."""
+
+    def setUp(self):
+        self.service = ResumeService(MagicMock())
+        self.service.ats_checker = MagicMock()
+        self.service.ats_checker.check.return_value = {
+            "score": 80.0, "passed": [], "issues": [],
+        }
+        self.service.grammar = MagicMock()
+        self.service.grammar.check.return_value = {"score": None}
+        self.service.kw_engine = MagicMock()
+        self.service.bullet_analyzer = MagicMock()
+        # Nothing flagged: isolate the section flow from the bullet rewrite.
+        self.service.bullet_analyzer.analyze_bullets.return_value = {
+            "score": 90.0,
+            "score_available": True,
+            "details": [{
+                "original": "Built APIs",
+                "has_metrics": True,
+                "verb_type": "strong",
+            }],
+        }
+        self.service.ai = MagicMock()
+        self.service.ai.provider = "groq"
+        self.service.ai.model = "test-model"
+        self.service.ai.client = object()
+        self.service.ai.rewrite_summary.return_value = {
+            "original": "Backend developer who ships APIs.",
+            "ai_output": "Backend developer who ships reliable APIs.",
+            "source": "groq",
+            "guard": {"status": "passed", "reasons": [], "retried": False},
+        }
+        self.service.ai.rewrite_skills.return_value = {
+            "original": "Python\nDocker",
+            "ai_output": "Languages: Python\nTools: Docker",
+            "lines": ["Languages: Python", "Tools: Docker"],
+            "source": "groq",
+            "guard": {"status": "passed", "reasons": [], "retried": False},
+        }
+        self.resume = Resume(
+            id=uuid4(),
+            user_id=uuid4(),
+            filename="r.pdf",
+            file_path="r.pdf",
+            file_type=".pdf",
+            raw_text="Backend developer who ships APIs.\nPython\nDocker",
+            parsed_data={"sections": {
+                "summary": {"raw": "Backend developer who ships APIs."},
+                "skills": {"raw": "Python\nDocker"},
+                "skills_parsed": ["Python", "Docker"],
+                "experience_parsed": [{
+                    "title": "Dev", "company": "Acme", "dates": "2024",
+                    "bullets": ["Built APIs"],
+                }],
+            }, "metadata": {}},
+        )
+        self.service.session.get.side_effect = (
+            lambda model, _id: self.resume if model is Resume else None
+        )
+
+    def _analyze(self, **kwargs):
+        return self.service.analyze(
+            self.resume.id, self.resume.user_id, **kwargs
+        )
+
+    def test_opt_out_never_sends_sections(self):
+        analysis = self._analyze(use_ai=False)
+
+        self.service.ai.rewrite_summary.assert_not_called()
+        self.service.ai.rewrite_skills.assert_not_called()
+        self.assertEqual(analysis.report["ai_section_rewrites"], {})
+        info = analysis.report["ai_rewriting"]
+        self.assertEqual(info["reason"], "disabled_by_user")
+        self.assertEqual(info["sections_sent"], [])
+
+    def test_server_switch_blocks_sections_too(self):
+        with patch("app.resume.service.get_settings") as settings:
+            settings.return_value.ai_rewriting_enabled = False
+            analysis = self._analyze(use_ai=True)
+
+        self.service.ai.rewrite_summary.assert_not_called()
+        self.service.ai.rewrite_skills.assert_not_called()
+        self.assertEqual(
+            analysis.report["ai_rewriting"]["reason"], "disabled_by_server"
+        )
+
+    def test_enabled_analysis_sends_summary_and_skills(self):
+        analysis = self._analyze()
+
+        self.service.ai.rewrite_summary.assert_called_once()
+        self.service.ai.rewrite_skills.assert_called_once()
+        args = self.service.ai.rewrite_skills.call_args.args
+        self.assertEqual(args[0], "Python\nDocker")
+        self.assertEqual(args[1], ["Python", "Docker"])
+        self.assertEqual(
+            set(analysis.report["ai_section_rewrites"]), {"summary", "skills"}
+        )
+        info = analysis.report["ai_rewriting"]
+        self.assertTrue(info["enabled"])
+        self.assertEqual(info["sections_sent"], ["summary", "skills"])
+        self.assertEqual(info["bullets_sent"], 0)
+
+    def test_skills_without_parsed_entries_are_not_sent(self):
+        self.resume.parsed_data["sections"]["skills_parsed"] = []
+        analysis = self._analyze()
+
+        self.service.ai.rewrite_skills.assert_not_called()
+        self.service.ai.rewrite_summary.assert_called_once()
+        self.assertEqual(analysis.report["ai_rewriting"]["sections_sent"], ["summary"])
+
+
+class ConfirmSectionRewriteTests(unittest.TestCase):
+    """C7: accepted summary/skills text, and nothing else, reaches exports."""
+
+    SUMMARY = "Backend developer who ships APIs."
+    SKILLS = "Python\nDocker"
+
+    def setUp(self):
+        self.service = ResumeService(MagicMock())
+        self.owner_id = uuid4()
+        self.resume = make_resume(self.owner_id)
+        self.resume.raw_text = self.SUMMARY + "\n" + self.SKILLS
+        self.resume.parsed_data = {"sections": {
+            "summary": {"raw": self.SUMMARY},
+            "skills": {"raw": self.SKILLS},
+            "skills_parsed": ["Python", "Docker", "SQL"],
+        }, "metadata": {}}
+        self.service.session.exec.return_value.first.return_value = None
+
+    def _wire(self, report):
+        self.analysis = make_analysis(self.resume.id, report=report)
+
+        def fake_get(model, _id):
+            if model is Resume:
+                return self.resume
+            if model is ResumeAnalysis:
+                return self.analysis
+            return None
+
+        self.service.session.get.side_effect = fake_get
+        return self.analysis
+
+    def _report(self):
+        return {
+            "ai_section_rewrites": {
+                "summary": {
+                    "original": self.SUMMARY,
+                    "ai_output": "Backend developer who ships reliable APIs.",
+                },
+                "skills": {
+                    "original": self.SKILLS,
+                    "ai_output": "Languages: Python, SQL\nTools: Docker",
+                },
+            },
+        }
+
+    def test_accept_summary_uses_suggestion_text(self):
+        self._wire(self._report())
+
+        stored, applied = self.service.confirm_section_rewrites(
+            self.resume.id, self.analysis.id, self.owner_id,
+            [{"section": "summary", "action": "accepted"}],
+        )
+
+        self.assertEqual(stored["summary"]["action"], "accepted")
+        self.assertEqual(
+            stored["summary"]["text"], "Backend developer who ships reliable APIs."
+        )
+        self.assertEqual(applied, 1)
+        self.assertEqual(self.analysis.report["section_decisions"], stored)
+        self.service.session.commit.assert_called()
+
+    def test_accept_skills_regrouping(self):
+        self._wire(self._report())
+
+        stored, applied = self.service.confirm_section_rewrites(
+            self.resume.id, self.analysis.id, self.owner_id,
+            [{
+                "section": "skills",
+                "action": "accepted",
+                "text": "Languages: Python, SQL\nTools: Docker",
+            }],
+        )
+
+        self.assertEqual(stored["skills"]["text"], "Languages: Python, SQL\nTools: Docker")
+        self.assertEqual(applied, 1)
+
+    def test_skills_edit_cannot_add_a_skill(self):
+        self._wire(self._report())
+
+        with self.assertRaises(HTTPException) as ctx:
+            self.service.confirm_section_rewrites(
+                self.resume.id, self.analysis.id, self.owner_id,
+                [{
+                    "section": "skills",
+                    "action": "accepted",
+                    "text": "Languages: Python, SQL, Kubernetes\nTools: Docker",
+                }],
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("Kubernetes", ctx.exception.detail)
+        self.assertNotIn("section_decisions", self.analysis.report)
+        self.service.session.commit.assert_not_called()
+
+    def test_skills_edit_cannot_drop_a_skill(self):
+        self._wire(self._report())
+
+        with self.assertRaises(HTTPException) as ctx:
+            self.service.confirm_section_rewrites(
+                self.resume.id, self.analysis.id, self.owner_id,
+                [{
+                    "section": "skills",
+                    "action": "accepted",
+                    "text": "Languages: Python, SQL",
+                }],
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("Docker", ctx.exception.detail)
+
+    def test_placeholder_cannot_be_accepted(self):
+        self._wire(self._report())
+
+        with self.assertRaises(HTTPException) as ctx:
+            self.service.confirm_section_rewrites(
+                self.resume.id, self.analysis.id, self.owner_id,
+                [{
+                    "section": "summary",
+                    "action": "accepted",
+                    "text": "Backend developer who ships [X] APIs.",
+                }],
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("[X]", ctx.exception.detail)
+
+    def test_unknown_section_is_rejected(self):
+        self._wire(self._report())
+
+        with self.assertRaises(HTTPException) as ctx:
+            self.service.confirm_section_rewrites(
+                self.resume.id, self.analysis.id, self.owner_id,
+                [{"section": "experience", "action": "accepted"}],
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_pending_clears_a_previous_decision(self):
+        self._wire(self._report())
+        self.service.confirm_section_rewrites(
+            self.resume.id, self.analysis.id, self.owner_id,
+            [{"section": "summary", "action": "accepted"}],
+        )
+
+        stored, applied = self.service.confirm_section_rewrites(
+            self.resume.id, self.analysis.id, self.owner_id,
+            [{"section": "summary", "action": "pending"}],
+        )
+
+        self.assertEqual(stored, {})
+        self.assertEqual(applied, 0)
+
+    def test_rejected_section_is_not_exported(self):
+        self._wire(self._report())
+        self.service.confirm_section_rewrites(
+            self.resume.id, self.analysis.id, self.owner_id,
+            [{"section": "summary", "action": "rejected"}],
+        )
+
+        self.assertEqual(self.service._decided_section_rewrites(self.analysis.report), {})
+
+    def test_another_users_resume_is_rejected(self):
+        self._wire(self._report())
+        with self.assertRaises(ResumeNotFoundError):
+            self.service.confirm_section_rewrites(
+                self.resume.id, self.analysis.id, uuid4(),
+                [{"section": "summary", "action": "accepted"}],
+            )
+
+    def test_analysis_from_another_resume_is_rejected(self):
+        self._wire(self._report())
+        self.analysis.resume_id = uuid4()
+        with self.assertRaises(AnalysisNotFoundError):
+            self.service.confirm_section_rewrites(
+                self.resume.id, self.analysis.id, self.owner_id,
+                [{"section": "summary", "action": "accepted"}],
+            )
+
+    def test_export_uses_accepted_summary_and_skills(self):
+        self._wire({
+            **self._report(),
+            "section_decisions": {
+                "summary": {
+                    "action": "accepted",
+                    "text": "Backend developer who ships reliable APIs.",
+                },
+                "skills": {
+                    "action": "accepted",
+                    "text": "Languages: Python, SQL\nTools: Docker",
+                },
+            },
+        })
+        exporter = MagicMock()
+        exporter.export_tailored.return_value = b"docx"
+        self.service.exporter = exporter
+
+        self.service.export_docx(
+            self.resume.id, self.owner_id, self.analysis.id
+        )
+
+        sections = exporter.export_tailored.call_args.kwargs["sections"]
+        self.assertEqual(
+            sections["summary"]["raw"],
+            "Backend developer who ships reliable APIs.",
+        )
+        self.assertEqual(
+            sections["skills"]["raw"], "Languages: Python, SQL\nTools: Docker"
+        )
+        # The original parsed data is not mutated.
+        self.assertEqual(self.resume.parsed_data["sections"]["summary"]["raw"], self.SUMMARY)
+
+    def test_comparison_reports_the_summary_change(self):
+        self._wire({
+            **self._report(),
+            "section_decisions": {
+                "summary": {
+                    "action": "accepted",
+                    "text": "Backend developer who ships reliable APIs.",
+                },
+            },
+        })
+
+        result = self.service.get_comparison(
+            self.resume.id, self.analysis.id, self.owner_id
+        )
+
+        self.assertIn(
+            {
+                "original": self.SUMMARY,
+                "tailored": "Backend developer who ships reliable APIs.",
+            },
+            result["changes"],
+        )
+        summary = next(
+            s for s in result["tailored"]["sections"] if s["key"] == "summary"
+        )
+        self.assertIn("reliable", "\n".join(summary["lines"]))
+
+    def test_version_stores_section_rewrites_with_sentinels(self):
+        self._wire({
+            **self._report(),
+            "section_decisions": {
+                "summary": {
+                    "action": "accepted",
+                    "text": "Backend developer who ships reliable APIs.",
+                },
+            },
+        })
+
+        version = self.service.create_version(
+            self.resume.id, self.owner_id, self.analysis.id
+        )
+
+        self.assertEqual(
+            version.applied_rewrites["__summary__"],
+            "Backend developer who ships reliable APIs.",
+        )
+        self.assertEqual(
+            version.parsed_data["sections"]["summary"]["raw"],
+            "Backend developer who ships reliable APIs.",
+        )
+        self.assertIn("reliable", version.raw_text)
+
+    def test_version_with_no_decisions_is_refused(self):
+        self._wire(self._report())
+
+        with self.assertRaises(HTTPException) as ctx:
+            self.service.create_version(
+                self.resume.id, self.owner_id, self.analysis.id
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+
+
 if __name__ == "__main__":
     unittest.main()

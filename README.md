@@ -22,6 +22,9 @@ plus AI rewrites that are stored, auditable, and never invent experience you don
 - **AI bullet rewrites** — batched, with per-rewrite provenance (`groq` / `guard_rejected`),
   retry variants, and a before/after improvement projection re-scored over the same
   bullet population.
+- **AI summary & skills suggestions** — the professional summary is reworded under the
+  same claim guard, and the skills section may only be reordered/regrouped from skills
+  you already list. Reviewed separately from bullets; only accepted text reaches an export.
 - **Per-job tailored resume versions** — one stored version per (resume, job): rewrites
   applied into the real text, re-saved (upserted) after better analyses, exportable as
   DOCX or PDF with a job-specific filename.
@@ -70,7 +73,7 @@ backend/
     config/        # settings, database, Alembic runner
   migrations/      # versioned schema migrations (baseline + tracker)
   alembic.ini
-  tests/           # 388 unittest tests
+  tests/           # 420 unittest tests
 frontend/
   src/
     pages/         # Landing, Auth, Dashboard, Upload, Analysis, JobDescriptions, Settings
@@ -151,7 +154,7 @@ bun run dev -- --port 8443 --strictPort
 ## Tests
 
 ```powershell
-# backend (from backend/) — 388 tests
+# backend (from backend/) - 420 tests
 $env:PYTHONUTF8="1"; .\venv\Scripts\python.exe -m unittest discover -s tests -t .
 
 # frontend — type-check + production build
@@ -174,5 +177,5 @@ bun run build
 
 ## Status
 
-See `ROADMAP.md` for the full prioritized backlog (75/77 done at last count) with a
+See `ROADMAP.md` for the full prioritized backlog (76/77 done at last count) with a
 change log of every batch, what the tests caught, and what remains.

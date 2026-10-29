@@ -295,6 +295,132 @@ function RewriteCard({
   )
 }
 
+/* ─── AI section rewrite card (C7) ───────────────────────── */
+function SectionRewriteCard({
+  section,
+  item,
+  decision,
+  saving,
+  onDecide,
+}: {
+  section: "summary" | "skills"
+  item: api.SectionRewrite
+  decision?: api.SectionDecision
+  saving: boolean
+  onDecide: (action: "accepted" | "rejected" | "pending", text?: string) => void
+}) {
+  const isSkills = section === "skills"
+  const label = isSkills ? "Skills section" : "Professional summary"
+  const suggestion = (item.ai_output ?? "").trim()
+  const lines = (item.lines?.length ? item.lines : suggestion.split("\n")).map(line => line.trim()).filter(Boolean)
+  const accepted = decision?.action === "accepted"
+  const rejected = decision?.action === "rejected"
+  const [draft, setDraft] = useState(accepted ? decision?.text ?? "" : "")
+  useEffect(() => {
+    setDraft(accepted ? decision?.text ?? "" : "")
+  }, [accepted, decision?.text])
+  const placeholder = /\[[^\]]{1,30}\]/.exec(draft)?.[0]
+  const dirty = accepted && draft.trim() !== (decision?.text ?? "").trim()
+  const withheld = item.guard?.status === "rejected" || item.guard?.status === "retry_failed"
+  const aiError = item.guard?.status === "ai_error" || (item.source === "fallback" && !suggestion)
+  const noSuggestion = withheld || aiError || !suggestion || suggestion === item.original.trim()
+  return (
+    <div className="bg-surface rounded-2xl border border-edge overflow-hidden">
+      <div className="px-5 py-3.5 border-b border-edge bg-off">
+        <p className="text-xs font-semibold text-mid uppercase tracking-wide">{label} — original</p>
+        <p className="text-sm text-mid leading-relaxed mt-1 whitespace-pre-wrap">{item.original}</p>
+      </div>
+      <div className="p-5 space-y-4">
+        {accepted ? (
+          <div className="rounded-xl border border-teal/30 bg-teal/5 p-3.5 space-y-3">
+            <p className="flex items-center gap-1.5 text-xs font-semibold text-teal">
+              <CheckCircle size={13} /> Accepted — this text will be used in your export
+            </p>
+            <textarea
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              rows={isSkills ? Math.max(3, lines.length + 1) : 4}
+              className="w-full text-sm text-navy leading-relaxed bg-surface rounded-lg px-3 py-2.5 border border-edge focus:outline-none focus:border-teal resize-y font-code"
+            />
+            {placeholder && (
+              <p className="text-xs text-red">Fill in {placeholder} before exporting — a placeholder can't be accepted.</p>
+            )}
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={() => onDecide("accepted", draft)}
+                disabled={!dirty || saving || !!placeholder || !draft.trim()}
+                className="px-3 py-1.5 text-xs font-semibold bg-teal text-navy rounded-lg hover:bg-teal-dim transition-all disabled:opacity-40"
+              >
+                {saving ? "Saving…" : "Save changes"}
+              </button>
+              <button
+                onClick={() => onDecide("pending")}
+                disabled={saving}
+                className="px-3 py-1.5 text-xs font-medium text-mid border border-edge rounded-lg hover:bg-off transition-all disabled:opacity-40"
+              >
+                Undo review
+              </button>
+              <span className="text-[11px] text-dim">Edit the text above, then save.</span>
+            </div>
+          </div>
+        ) : rejected ? (
+          <div className="rounded-xl border border-edge bg-off p-3.5 flex items-center justify-between gap-3 flex-wrap">
+            <p className="text-sm text-mid">Rejected — your original {isSkills ? "skills section" : "summary"} will be exported unchanged.</p>
+            <button
+              onClick={() => onDecide("pending")}
+              disabled={saving}
+              className="px-3 py-1.5 text-xs font-medium text-mid border border-edge rounded-lg hover:bg-surface transition-all disabled:opacity-40"
+            >
+              Undo review
+            </button>
+          </div>
+        ) : noSuggestion ? (
+          <p className="text-sm text-dim italic">
+            {withheld
+              ? "AI suggestion not shown: it added details that aren't in your original text."
+              : aiError
+                ? "The AI service didn't return a usable suggestion for this section. Your original text stays as written."
+                : "The AI kept your original text, so there is nothing to apply."}
+          </p>
+        ) : (
+          <>
+            <div>
+              <p className="text-xs font-bold text-teal mb-1.5">Suggested {label.toLowerCase()}</p>
+              <div className="text-sm text-navy leading-relaxed bg-warm rounded-lg px-3 py-2.5 border border-edge whitespace-pre-wrap font-code">
+                {isSkills ? lines.join("\n") : suggestion}
+              </div>
+              {isSkills && (
+                <p className="text-[11px] text-dim mt-1.5">
+                  Only reorganizes the skills already in your resume — it cannot add, remove, rename, or invent one.
+                </p>
+              )}
+            </div>
+            <div className="flex items-center justify-between gap-3 flex-wrap pt-1">
+              <p className="text-[11px] text-dim">Nothing is applied until you accept it.</p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => onDecide("rejected")}
+                  disabled={saving}
+                  className="px-3 py-1.5 text-xs font-medium text-mid border border-edge rounded-lg hover:bg-off transition-all disabled:opacity-40"
+                >
+                  Keep my original
+                </button>
+                <button
+                  onClick={() => onDecide("accepted", suggestion)}
+                  disabled={saving}
+                  className="px-3 py-1.5 text-xs font-semibold text-navy bg-teal/20 border border-teal/30 rounded-lg hover:bg-teal/30 transition-all disabled:opacity-40"
+                >
+                  Use this
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 /* ─── Page ───────────────────────────────────────────────── */
 export default function Analysis({ navigate, addToast }: PageProps) {
   const [passedOpen, setPassedOpen] = useState(false)
@@ -316,6 +442,9 @@ export default function Analysis({ navigate, addToast }: PageProps) {
   // C6: per-rewrite review decisions. Only accepted ones reach the export.
   const [rewriteDecisions, setRewriteDecisions] = useState<Record<string, RewriteDecision>>({})
   const [rewriteSaving, setRewriteSaving] = useState<string | null>(null)
+  // C7: separate review for the summary and skills suggestions.
+  const [sectionDecisions, setSectionDecisions] = useState<Record<string, api.SectionDecision>>({})
+  const [sectionSaving, setSectionSaving] = useState<string | null>(null)
   // F8: the page stores only ids in sessionStorage and reloads the analysis
   // from the API, so a refresh (or reopening the tab) keeps the same report.
   const [analysis, setAnalysis] = useState<api.ResumeAnalysis | null>(null)
@@ -337,6 +466,7 @@ export default function Analysis({ navigate, addToast }: PageProps) {
         if (cancelled) return
         setAnalysis(data)
         setRewriteDecisions((data.report?.rewrite_decisions ?? {}) as Record<string, RewriteDecision>)
+        setSectionDecisions(data.report?.section_decisions ?? {})
       })
       .catch(() => {
         if (!cancelled) addToast("error", "Could not load that analysis. Run it again from the Upload page.")
@@ -441,10 +571,44 @@ export default function Analysis({ navigate, addToast }: PageProps) {
     finally { setRewriteSaving(null) }
   }
 
+  // C7: accept/reject/edit the summary or skills suggestion. Skills edits are
+  // re-checked by the backend against the parsed skills list.
+  const handleSectionDecision = async (
+    section: "summary" | "skills",
+    action: "accepted" | "rejected" | "pending",
+    text?: string,
+  ) => {
+    if (!resumeId || !analysis?.id) { addToast("error", "No resume selected"); return }
+    setSectionSaving(section)
+    try {
+      const res = await api.saveSectionDecisions(resumeId, analysis.id, [{ section, action, text }])
+      setSectionDecisions(res.section_decisions)
+      setAnalysis(prev => prev && prev.report
+        ? { ...prev, report: { ...prev.report, section_decisions: res.section_decisions } }
+        : prev)
+      if (action === "accepted") addToast("success", "Section rewrite accepted — the export will use this text.")
+      else if (action === "rejected") addToast("info", "Section rewrite rejected — your original text stays as written.")
+      else addToast("info", "Review undone — this section suggestion is unreviewed again.")
+    } catch (error) { addToast("error", error instanceof Error ? error.message : "Could not save section decision") }
+    finally { setSectionSaving(null) }
+  }
+
   const report = analysis?.report
   // C6: how many reviewed rewrites will actually change the exported bullets.
   const acceptedRewriteCount = Object.values(rewriteDecisions)
     .filter(d => d.action === "accepted" && (d.text ?? "").trim()).length
+  // C7: summary/skills suggestions available in this analysis and how many
+  // reviewed ones will change the exported sections.
+  const sectionRewrites = report?.ai_section_rewrites ?? {}
+  const sectionEntries = (["summary", "skills"] as const)
+    .filter(section => !!sectionRewrites[section])
+  const acceptedSectionCount = Object.values(sectionDecisions)
+    .filter(d => d.action === "accepted" && (d.text ?? "").trim()).length
+  const totalAcceptedCount = acceptedRewriteCount + acceptedSectionCount
+  const acceptedParts = [
+    acceptedRewriteCount > 0 ? `${acceptedRewriteCount} bullet rewrite${acceptedRewriteCount === 1 ? "" : "s"}` : "",
+    acceptedSectionCount > 0 ? `${acceptedSectionCount} section rewrite${acceptedSectionCount === 1 ? "" : "s"}` : "",
+  ].filter(Boolean)
   // D6: highlight the exact lines that differ between original and export.
   const comparisonChanges = comparison?.changes ?? []
   const originalLineChanged = (line: string) =>
@@ -680,20 +844,6 @@ export default function Analysis({ navigate, addToast }: PageProps) {
               <p className="text-xs text-mid bg-off rounded-lg px-3 py-2 mt-4">
                 Scores re-computed with the AI-rewritten bullets in place. ATS compatibility stays the same — it measures formatting, not wording.
               </p>
-              {analysis.job_id && (
-                <button
-                  onClick={handleSaveVersion}
-                  disabled={saveVersionLoading || acceptedRewriteCount === 0}
-                  title={acceptedRewriteCount === 0 ? "Accept at least one rewrite first" : undefined}
-                  className="mt-3 flex items-center gap-2 px-4 py-2 bg-navy text-white text-xs font-semibold rounded-xl hover:bg-navy-light transition-all disabled:opacity-50"
-                >
-                  <Save size={13} />
-                  {saveVersionLoading ? "Saving version…" : "Save as version for this job"}
-                </button>
-              )}
-              {analysis.job_id && acceptedRewriteCount === 0 && (
-                <p className="text-xs text-dim mt-2">A version is built from accepted rewrites — accept at least one suggestion below first.</p>
-              )}
             </div>
           )
         })()}
@@ -915,6 +1065,33 @@ export default function Analysis({ navigate, addToast }: PageProps) {
           </div>
         </div>
 
+        {/* C7: summary/skills suggestions — reviewed separately from bullets */}
+        {sectionEntries.length > 0 && (
+          <div className="bg-surface rounded-2xl border border-edge overflow-hidden mb-6">
+            <div className="px-6 py-4 border-b border-edge flex items-center gap-2">
+              <FileText size={16} className="text-teal" />
+              <h2 className="font-display font-semibold text-base text-navy">AI Summary &amp; Skills Suggestions</h2>
+              <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-teal/10 text-teal ml-1">Backend AI</span>
+              <span className="ml-auto text-[11px] text-mid">{acceptedSectionCount} of {sectionEntries.length} accepted</span>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-mid">
+                The summary can be reworded and the skills section regrouped for this job. The summary guard blocks new numbers, skills, names, and claims; skills may only be reordered or grouped — never added, dropped, or renamed. Nothing changes until you decide.
+              </p>
+              {sectionEntries.map(section => (
+                <SectionRewriteCard
+                  key={section}
+                  section={section}
+                  item={sectionRewrites[section]}
+                  decision={sectionDecisions[section]}
+                  saving={sectionSaving === section}
+                  onDecide={(action, text) => handleSectionDecision(section, action, text)}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* AI Rewrites */}
         <div className="bg-surface rounded-2xl border border-edge overflow-hidden mb-6">
           <div className="px-6 py-4 border-b border-edge flex items-center gap-2">
@@ -929,7 +1106,14 @@ export default function Analysis({ navigate, addToast }: PageProps) {
             <p className="text-sm text-mid">Weakest bullets, rewritten in two intensities. Accept a rewrite to use it in your export, edit it first if you like, or keep your original. Nothing changes until you decide.</p>
             {aiRewriting?.reason === "ran" && (
               <p className="text-xs text-mid bg-off rounded-lg px-3 py-2">
-                {aiRewriting.bullets_sent} bullet line{aiRewriting.bullets_sent === 1 ? "" : "s"} sent to{" "}
+                {[
+                  aiRewriting.bullets_sent > 0
+                    ? `${aiRewriting.bullets_sent} bullet line${aiRewriting.bullets_sent === 1 ? "" : "s"}`
+                    : "",
+                  (aiRewriting.sections_sent ?? []).length > 0
+                    ? `your ${(aiRewriting.sections_sent ?? []).join(" and ")}`
+                    : "",
+                ].filter(Boolean).join(" and ")} sent to{" "}
                 {aiRewriting.provider ?? "your AI provider"}
                 {aiRewriting.model ? ` (${aiRewriting.model})` : ""}. Nothing is applied until you accept it.
               </p>
@@ -1104,12 +1288,12 @@ export default function Analysis({ navigate, addToast }: PageProps) {
           <div>
             <p className="font-display font-semibold text-navy text-sm">Ready to apply?</p>
             <p className="text-xs text-mid">Download your ATS-optimized resume with all formatting fixes applied.</p>
-            <p className={`text-xs mt-1 ${acceptedRewriteCount > 0 ? "text-teal" : "text-dim"}`}>
-              {acceptedRewriteCount > 0
-                ? `${acceptedRewriteCount} accepted rewrite${acceptedRewriteCount === 1 ? "" : "s"} will be used in this export.`
-                : rewrites.length > 0
-                  ? "No rewrites accepted yet — your original bullets will be exported."
-                  : "Your original bullets will be exported."}
+            <p className={`text-xs mt-1 ${totalAcceptedCount > 0 ? "text-teal" : "text-dim"}`}>
+              {totalAcceptedCount > 0
+                ? `${acceptedParts.join(" and ")} will be used in this export.`
+                : rewrites.length > 0 || sectionEntries.length > 0
+                  ? "No rewrites accepted yet — your original text will be exported."
+                  : "Your original text will be exported."}
             </p>
             {resumeMeta?.jobTitle && (
               <label className="mt-2 flex items-start gap-2 text-xs text-mid cursor-pointer select-none">
@@ -1130,6 +1314,17 @@ export default function Analysis({ navigate, addToast }: PageProps) {
             )}
           </div>
           <div className="flex items-center gap-3 flex-wrap">
+            {analysis.job_id && (
+              <button
+                onClick={handleSaveVersion}
+                disabled={saveVersionLoading || totalAcceptedCount === 0}
+                title={totalAcceptedCount === 0 ? "Accept at least one rewrite first" : undefined}
+                className="flex items-center gap-2 px-4 py-2.5 text-sm text-navy font-medium border border-edge rounded-xl hover:bg-off transition-all disabled:opacity-50"
+              >
+                <Save size={15} />
+                {saveVersionLoading ? "Saving version…" : "Save as version"}
+              </button>
+            )}
             <button
               onClick={openComparison}
               className="flex items-center gap-2 px-4 py-2.5 text-sm text-navy font-medium border border-edge rounded-xl hover:bg-off transition-all"

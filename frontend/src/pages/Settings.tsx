@@ -82,7 +82,7 @@ export default function Settings({ addToast }: PageProps) {
     setAiEnabled(next)
     api.setAiRewritingPreference(next)
     addToast("info", next
-      ? "AI rewriting on — new analyses may send flagged bullets to your AI provider."
+      ? "AI rewriting on — new analyses may send flagged bullets, your summary, and skill names to your AI provider."
       : "AI rewriting off — new analyses will stay on this machine.")
   }
 
@@ -200,16 +200,16 @@ export default function Settings({ addToast }: PageProps) {
                 <p className="text-sm font-medium text-navy mb-0.5">What leaves this machine</p>
                 <p className="text-xs text-mid leading-relaxed">
                   ATS, keyword, bullet, and grammar checks always run locally. Only AI rewriting
-                  sends data out: up to 8 flagged bullet lines, the target job title, and skill
-                  names go to your configured provider. Your contact details and the rest of the
-                  resume are not sent.
+                  sends data out: up to 8 flagged bullet lines, your professional summary, the
+                  skills you already list, the target job title, and job skill names go to your
+                  configured provider. Your contact details and the rest of the resume are not sent.
                 </p>
               </div>
             </div>
 
             <div className="flex items-center justify-between gap-4">
               <div>
-                <p className="text-sm font-medium text-navy">AI bullet rewriting</p>
+                <p className="text-sm font-medium text-navy">AI rewriting (bullets, summary, skills)</p>
                 <p className="text-xs text-dim">
                   {serverAiEnabled
                     ? "Turn this off to keep every analysis on this machine. Rule-based suggestions still appear."
