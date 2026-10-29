@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Download, RefreshCw, ChevronDown, ChevronUp, Copy, CheckCircle, Check, XCircle, AlertTriangle, Lightbulb, BarChart2, Target, Edit3, Zap, BookOpen, ArrowLeftRight, Shield, Save, Info, X, FileText } from "lucide-react"
 import type { PageProps } from "../types"
 import * as api from "../api"
@@ -456,6 +456,11 @@ export default function Analysis({ navigate, addToast }: PageProps) {
   const [loadingAnalysis, setLoadingAnalysis] = useState(true)
   const [resumeId, setResumeId] = useState<string | null>(null)
   const resumeMeta = api.getLastResumeMeta()
+  // The export bar is fixed to the bottom of the viewport and its height
+  // changes with wrapping, the title checkbox, and accepted-rewrite text.
+  // Measure it so the page always reserves exactly enough room for it.
+  const exportBarRef = useRef<HTMLDivElement>(null)
+  const [exportBarHeight, setExportBarHeight] = useState(0)
 
   useEffect(() => {
     const storedResumeId = api.getLastResumeId()
@@ -479,6 +484,18 @@ export default function Analysis({ navigate, addToast }: PageProps) {
       .finally(() => { if (!cancelled) setLoadingAnalysis(false) })
     return () => { cancelled = true }
   }, [addToast])
+
+  // Keep the page's bottom padding in sync with the fixed export bar, so the
+  // last card (cover letter) is never hidden behind it at any viewport width.
+  useEffect(() => {
+    const bar = exportBarRef.current
+    if (!bar) return
+    const update = () => setExportBarHeight(bar.getBoundingClientRect().height)
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(bar)
+    return () => observer.disconnect()
+  }, [analysis])
 
   const handleExport = async (format: "docx" | "pdf" = "docx") => {
     if (!resumeId) { addToast("error", "No resume selected for export"); return }
@@ -724,7 +741,10 @@ export default function Analysis({ navigate, addToast }: PageProps) {
   const deltaPct = (v: number | null | undefined) => (v == null ? null : Math.round(v))
 
   return (
-    <div className="min-h-screen bg-warm pb-28">
+    <div
+      className="min-h-screen bg-warm pb-28"
+      style={exportBarHeight ? { paddingBottom: exportBarHeight + 24 } : undefined}
+    >
       <div className="max-w-5xl mx-auto px-6 py-10">
 
         {/* Header */}
@@ -1286,6 +1306,7 @@ export default function Analysis({ navigate, addToast }: PageProps) {
 
       {/* Sticky export bar */}
       <div
+        ref={exportBarRef}
         className="fixed bottom-0 left-0 right-0 z-30 border-t border-edge"
         style={{ background: "rgba(255,255,255,0.9)", backdropFilter: "blur(16px)" }}
       >
