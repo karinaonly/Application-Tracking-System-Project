@@ -221,9 +221,10 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   *Fix:* rewrite all flagged bullets in one batched call or in parallel.
   ✅ *Done 2026-09-30: All flagged bullets go in ONE API call via `rewrite_bullets()` instead of one call per bullet (old code: up to 3 sequential calls). Cap raised from 3 to 8 bullets, enforced inside `AIRewriter` via `MAX_BULLETS_PER_CALL` so a huge resume can't blow up the prompt; bullets beyond the cap are left untouched with `source: "skipped_batch_limit"`, never silently dropped. Verified with `test_batched_single_call_for_multiple_bullets` and `test_bullets_beyond_cap_are_skipped_not_sent`.*
 
-- [ ] **C5 (P2): Client recreated on every request** · `analyzer/ai_rewriter.py`, `resume/service.py`
+- [x] **C5 (P2): Client recreated on every request** · `analyzer/ai_rewriter.py`, `resume/service.py`
   *Fix:* create the client once (singleton or cached dependency).
   ℹ️ *2026-09-30: same root cause as F6 (a new `ResumeService`, and therefore a new `AIRewriter` and `OpenAI` client, is built per request). Batching (C4) cut the number of calls per analysis from up to 3 to 1, but the client itself is still rebuilt each request until F6 is done.*
+  ✅ *Done 2026-10-29: fixed together with F6. `AIRewriter` is built once per process by the shared-component cache, so its OpenAI client, provider/model/key resolution, and timeout configuration are no longer discarded per request.*
 
 - [x] **C6 (P1): No user review before applying AI rewrites** · frontend + backend
   Rewrites are applied straight into the export. Placeholder generation is now disabled and guarded server-side by C1, but users still cannot accept, reject, or edit individual suggestions before download.
@@ -346,9 +347,10 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   *Fix:* show an empty state or "N/A" instead.
   ✅ *Done 2026-10-26: the numeric fallbacks are gone — missing scores render "N/A" (ATS/keyword/bullet cards), and the page shows a "No analysis to show" empty state with a link to Upload when there is no analysis at all, instead of a zeroed-out report.*
 
-- [ ] **F6 (P2): Analyzers constructed per request** · `resume/service.py`
+- [x] **F6 (P2): Analyzers constructed per request** · `resume/service.py`
   A new spellchecker and other analyzers are built each time.
   *Fix:* instantiate once at startup.
+  ✅ *Done 2026-10-29: `ResumeService` now pulls every analyzer from a process-wide `@lru_cache` (`_shared_components()`): extractor, section parser, ATS checker, keyword engine, bullet analyzer, grammar checker, AI rewriter, exporter. The expensive `SpellChecker` load and the AI client are paid once instead of per request; instances are stateless, and `clear_shared_components()` exists for tests/config reloads. Verified: two services share the same objects and `AIRewriter` is constructed exactly once.*
 
 - [ ] **F7 (P2): Frontend still Figma Make boilerplate** · `frontend/`
   `package.json` name is `figma-make-app`, and `AGENTS.md`, `CLAUDE.md`, `.figma/`, and `.mise.toml` describe the Figma environment.
@@ -408,11 +410,11 @@ Counts verified against the item list on 2026-10-23. (F14 is unused; numbering j
 |---|---|---|
 | A. Bugs | 22 | 17 |
 | B. Scoring | 11 | 7 |
-| C. AI Rewriter | 13 | 11 |
+| C. AI Rewriter | 13 | 12 |
 | D. Features | 8 | 3 |
 | E. Security & Config | 6 | 4 |
-| F. Hygiene | 17 | 11 |
-| **Total** | **77** | **53** |
+| F. Hygiene | 17 | 12 |
+| **Total** | **77** | **55** |
 
 Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrites from Groq, no fallbacks), A13 (a real resume export keeps its tech spellings), E1 (empty `JWT_SECRET` aborts startup), E2 (allowed preflight 200 / foreign origin 400), and E5 (zero SQL-echo lines in the live log). A14's new certifications/languages sections are fixture-tested because the current real resume has neither; A19 is build-verified but still needs a UI click-through to become 🟢. The rest of the C section remains unit-tested only (🟡) until each item is exercised individually.
 
@@ -422,6 +424,7 @@ Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrit
 
 | Date | Item(s) | What changed | Notes |
 |---|---|---|---|
+| 2026-10-29 | C5, F6 | Analyzers and the AI client are now process-wide instead of rebuilt per request. `ResumeService` pulls its extractor, section parser, ATS checker, keyword engine, bullet analyzer, grammar checker, `AIRewriter` (and its OpenAI client/config), and exporter from a lazy `@lru_cache`; `clear_shared_components()` resets it for tests. The grammar `SpellChecker` load and AI client setup are paid once. | 244 backend tests pass (3 new: shared instances, single `AIRewriter` construction, cache reset). Full suite dropped from ~19s to ~10s. Counts: C 11 → 12, F 11 → 12, total 53 → 55. |
 | 2026-10-29 | A6, A7 | Uploads are no longer trusted: the client filename is used only to derive a validated extension, and files are stored as `{upload_dir}/{user_id}/{uuid}{ext}` with a separately sanitized display name (basename, control/reserved characters stripped, `resume` fallback, length cap). The configured `allowed_extensions` and `max_file_size_mb` are now enforced before parsing or writing — unsupported/extensionless → 400 listing allowed types, empty → 400, oversized → 413 with the limit — and reads stop at `max + 1` bytes so a huge upload is never loaded whole. | 241 backend tests pass (11 new upload tests covering `../` and `..\..` traversal, same-name collisions, extension case, empty/oversized/extensionless files). Counts: A 15 → 17, total 51 → 53. |
 | 2026-10-29 | C6 | AI rewrites now require explicit review before they can reach the export. New `rewrite-decisions` endpoint stores accept/reject/edit per original bullet (merged one card at a time; "pending" clears a decision), and a fresh analysis applies none — the export keeps the original bullets until the user accepts something. Placeholders (`[X]`), unknown originals, and empty/oversized text are rejected with 400, and the exporter refuses placeholder text even if it slips through; it now also accepts the plain-string rewrite shape while still reading pre-C6 `{"ai_output": ...}` maps. D3 versions are built from accepted rewrites only (button disabled until one is accepted). UI adds "Use this" / "Keep my original" / inline edit + undo per suggestion, an accepted counter, and an export-bar line stating how many rewrites the download will use. Verified live: accept → text in DOCX, unknown original → 400, `[X]` → 400, revert → original bullets. | 230 backend tests pass (15 new); `bun run build` clean. Counts: C 10 → 11, total 50 → 51. |
 | 2026-10-28 | A3 (placement fix) | Live export review caught a misplacement: confirmed "OOP" rendered as "DevOps & Tools: …, Object-Oriented Programming". Cause: `Object-Oriented Programming` was in the `Process & Tools` category, whose label keywords include the generic word "tools" — so any "…& Tools" resume line matched. Paradigms/methodologies now live in a new `Concepts` category (OOP, Design Patterns, System Design, Agile, Scrum, Kanban) whose label keywords contain no generic "tools"; `Cloud & DevOps` no longer claims "tools"/"tooling" either (it still matches "DevOps & Tools" via "devops"). Real tools (Figma, Jira, Confluence, Swagger) stay in `Process & Tools` and still fold into a "…& Tools" line. Verified live on analysis `ce95069e…`: the DevOps line is unchanged and OOP now lands on a fallback "Additional Skills: Object-Oriented Programming" line. | 215 backend tests pass (4 new: taxonomy + exporter placement). Counts unchanged: total 50. |

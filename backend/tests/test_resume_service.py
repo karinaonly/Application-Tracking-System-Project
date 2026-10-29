@@ -1,15 +1,16 @@
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from fastapi import HTTPException
 from sqlmodel import SQLModel, Session, create_engine
 
+from app.analyzer.ai_rewriter import AIRewriter
 from app.auth.models import User  # registers the users table for real-DB tests
 from app.common.exceptions import AnalysisNotFoundError, JobNotFoundError, ResumeNotFoundError, VersionNotFoundError
 from app.jobs.models import JobDescription
 from app.resume.models import Resume, ResumeAnalysis, ResumeVersion
-from app.resume.service import ResumeService
+from app.resume.service import ResumeService, clear_shared_components
 
 
 def make_resume(user_id) -> Resume:
@@ -85,6 +86,38 @@ def make_analysis(resume_id, report=None, job_id=None) -> ResumeAnalysis:
         bullet_score=50.0,
         report=report or {},
     )
+
+
+class SharedAnalyzerTests(unittest.TestCase):
+    """C5/F6: analyzers and the AI client are created once per process."""
+
+    def tearDown(self):
+        clear_shared_components()
+
+    def test_services_share_the_same_analyzer_instances(self):
+        first = ResumeService(MagicMock())
+        second = ResumeService(MagicMock())
+
+        self.assertIs(first.ai, second.ai)
+        self.assertIs(first.grammar, second.grammar)
+        self.assertIs(first.kw_engine, second.kw_engine)
+        self.assertIs(first.ats_checker, second.ats_checker)
+        self.assertIs(first.exporter, second.exporter)
+
+    def test_ai_rewriter_is_constructed_once(self):
+        clear_shared_components()
+        with patch("app.resume.service.AIRewriter", wraps=AIRewriter) as ctor:
+            ResumeService(MagicMock())
+            ResumeService(MagicMock())
+        self.assertEqual(ctor.call_count, 1)
+
+    def test_clear_rebuilds_the_shared_set(self):
+        first = ResumeService(MagicMock())
+        clear_shared_components()
+        second = ResumeService(MagicMock())
+
+        self.assertIsNot(first.ai, second.ai)
+        self.assertIsNot(first.grammar, second.grammar)
 
 
 class ImprovementScoringTests(unittest.TestCase):

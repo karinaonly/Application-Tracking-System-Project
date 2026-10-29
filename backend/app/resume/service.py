@@ -1,6 +1,7 @@
 from sqlmodel import Session, select
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
+from functools import lru_cache
 from fastapi import UploadFile, HTTPException
 import os
 import re
@@ -32,17 +33,49 @@ MAX_REWRITE_CHARS = 600
 MAX_BULLETS_TO_REWRITE = 8
 
 
+@lru_cache(maxsize=1)
+def _shared_components() -> dict:
+    """C5/F6: build the analyzers and AI client once for the whole process.
+
+    ``AIRewriter`` resolves its provider/model/key at construction time and
+    creates one OpenAI client; rebuilding it per request threw that away and
+    re-read settings every time. The analyzers are stateless, so sharing them
+    is safe. Call ``clear_shared_components()`` in tests that need a fresh
+    configuration.
+    """
+    return {
+        "extractor": TextExtractor(),
+        "sec_parser": SectionParser(),
+        "ats_checker": ATSCompatibilityChecker(),
+        "kw_engine": KeywordEngine(),
+        "bullet_analyzer": BulletAnalyzer(),
+        "grammar": GrammarChecker(),
+        "ai": AIRewriter(),
+        "exporter": DocxExporter(),
+    }
+
+
+def clear_shared_components() -> None:
+    """Drop the shared analyzers (tests / config reloads)."""
+    _shared_components.cache_clear()
+
+
 class ResumeService:
     def __init__(self, session: Session):
         self.session = session
-        self.extractor = TextExtractor()
-        self.sec_parser = SectionParser()
-        self.ats_checker = ATSCompatibilityChecker()
-        self.kw_engine = KeywordEngine()
-        self.bullet_analyzer = BulletAnalyzer()
-        self.grammar = GrammarChecker()
-        self.ai = AIRewriter()
-        self.exporter = DocxExporter()
+        # C5/F6: the analyzers (notably the grammar SpellChecker and the AI
+        # client) are expensive to build and hold no per-request state, so one
+        # shared set is created lazily and reused by every request instead of
+        # being rebuilt for each ResumeService instance.
+        components = _shared_components()
+        self.extractor = components["extractor"]
+        self.sec_parser = components["sec_parser"]
+        self.ats_checker = components["ats_checker"]
+        self.kw_engine = components["kw_engine"]
+        self.bullet_analyzer = components["bullet_analyzer"]
+        self.grammar = components["grammar"]
+        self.ai = components["ai"]
+        self.exporter = components["exporter"]
 
     def upload(self, file: UploadFile, user_id: UUID) -> Resume:
         if not file.filename:
