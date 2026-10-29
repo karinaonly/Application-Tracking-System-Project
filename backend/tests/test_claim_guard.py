@@ -72,6 +72,10 @@ class ClaimGuardTests(unittest.TestCase):
             ("Used Next.js and Tailwind for the portfolio site", "Built the portfolio site with NextJS and TailwindCSS"),
             ("Secured the API with JWT", "Secured the API with JWT authentication"),
             ("Wrote Jest tests for the checkout flow", "Wrote unit tests with Jest for the checkout flow"),
+            (
+                "Backend developer who ships APIs.",
+                "Backend developer who ships reliable APIs. Focused on clean, maintainable code.",
+            ),
         ]
         for original, rewrite in passing:
             with self.subTest(rewrite=rewrite):

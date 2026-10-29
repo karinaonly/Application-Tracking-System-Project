@@ -324,6 +324,11 @@ function SectionRewriteCard({
   const withheld = item.guard?.status === "rejected" || item.guard?.status === "retry_failed"
   const aiError = item.guard?.status === "ai_error" || (item.source === "fallback" && !suggestion)
   const noSuggestion = withheld || aiError || !suggestion || suggestion === item.original.trim()
+  const aiErrorNote = item.error && /rate limit|429/i.test(item.error)
+    ? "The AI provider is rate-limiting requests right now. Wait a minute, then re-analyze."
+    : item.error && /empty response/i.test(item.error)
+      ? "The AI provider returned an empty response for this section. Re-analyze to try again."
+      : "The AI service didn't return a usable suggestion for this section. Your original text stays as written."
   return (
     <div className="bg-surface rounded-2xl border border-edge overflow-hidden">
       <div className="px-5 py-3.5 border-b border-edge bg-off">
@@ -379,7 +384,7 @@ function SectionRewriteCard({
             {withheld
               ? "AI suggestion not shown: it added details that aren't in your original text."
               : aiError
-                ? "The AI service didn't return a usable suggestion for this section. Your original text stays as written."
+                ? aiErrorNote
                 : "The AI kept your original text, so there is nothing to apply."}
           </p>
         ) : (

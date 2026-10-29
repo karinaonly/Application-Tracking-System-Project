@@ -73,7 +73,7 @@ backend/
     config/        # settings, database, Alembic runner
   migrations/      # versioned schema migrations (baseline + tracker)
   alembic.ini
-  tests/           # 420 unittest tests
+  tests/           # 424 unittest tests
 frontend/
   src/
     pages/         # Landing, Auth, Dashboard, Upload, Analysis, JobDescriptions, Settings
@@ -154,7 +154,7 @@ bun run dev -- --port 8443 --strictPort
 ## Tests
 
 ```powershell
-# backend (from backend/) - 420 tests
+# backend (from backend/) - 424 tests
 $env:PYTHONUTF8="1"; .\venv\Scripts\python.exe -m unittest discover -s tests -t .
 
 # frontend — type-check + production build

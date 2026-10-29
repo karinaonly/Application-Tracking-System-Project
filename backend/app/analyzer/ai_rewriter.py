@@ -378,7 +378,7 @@ class AIRewriter:
                 self._summary_system_prompt(),
                 prompt,
                 temperature=0.4,
-                max_tokens=400,
+                max_tokens=1000,
             )
             if error:
                 break
@@ -448,7 +448,7 @@ class AIRewriter:
                 self._skills_system_prompt(),
                 prompt,
                 temperature=0.2,
-                max_tokens=500,
+                max_tokens=1400,
             )
             if error:
                 break
@@ -599,35 +599,44 @@ class AIRewriter:
         user_prompt: str,
         *,
         temperature: float = 0.5,
-        max_tokens: int = 900,
+        max_tokens: int = 1200,
     ) -> tuple[str | None, str | None]:
         """Generate plain text with the shared client.
 
         Returns ``(text, error)``. The error is already redacted of the API key.
+
+        Reasoning models such as ``gpt-oss`` spend part of ``max_tokens`` on
+        hidden reasoning, so a low cap can produce a 200 response with an empty
+        content block. That is retried once with double the budget; real errors
+        (rate limits, network, auth) are returned immediately.
         """
         if not self.client:
             return None, "AI provider is not configured"
 
-        try:
-            res = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
+        for attempt in range(2):
+            try:
+                res = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=temperature,
+                    max_tokens=min(max_tokens * (2 ** attempt), 4000),
+                )
+            except Exception as e:
+                error = self._safe_error(e)
+                logger.warning(
+                    "AI text generation failed (%s/%s): %s",
+                    self.provider, self.model, error,
+                )
+                return None, error
+
             content = (res.choices[0].message.content or "").strip()
-            if not content:
-                return None, "empty response from model"
-            return content, None
-        except Exception as e:
-            error = self._safe_error(e)
-            logger.warning(
-                "AI text generation failed (%s/%s): %s", self.provider, self.model, error
-            )
-            return None, error
+            if content:
+                return content, None
+
+        return None, "empty response from model"
 
     # ------------------------------------------------------------------ #
     # Response parsing

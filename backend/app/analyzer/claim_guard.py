@@ -103,8 +103,14 @@ def _looks_like_name(token: str, is_first: bool) -> bool:
 def _new_proper_nouns(original: str, rewrite: str) -> list[str]:
     original_norms = {_norm(t) for t in _TOKEN_RE.findall(original)}
     found = []
-    for index, token in enumerate(_TOKEN_RE.findall(rewrite)):
-        if not _looks_like_name(token, index == 0):
+    for match in _TOKEN_RE.finditer(rewrite):
+        token = match.group(0)
+        # A capitalized word that starts a sentence is ordinary English, not a
+        # proper noun. Summaries are multi-sentence prose, so checking only the
+        # very first token flagged every new sentence ("... APIs. Focused on ...").
+        before = rewrite[:match.start()].rstrip()
+        sentence_start = not before or before[-1] in ".!?\n"
+        if not _looks_like_name(token, sentence_start):
             continue
         norm = _norm(token)
         if not norm or norm in original_norms:

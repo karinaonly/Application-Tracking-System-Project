@@ -426,6 +426,50 @@ class PromptContentTests(unittest.TestCase):
         self.assertIn("Backend Dev", sent_prompt)
 
 
+class GenerateTextTests(unittest.TestCase):
+    """C7: empty content from a reasoning model is retried, real errors are not."""
+
+    def test_empty_content_is_retried_with_a_larger_budget(self):
+        r, fake_client = make_rewriter_with_fake_client(responses=["", "hello"])
+        text, error = r.generate_text("sys", "user", max_tokens=400)
+
+        self.assertEqual(text, "hello")
+        self.assertIsNone(error)
+        self.assertEqual(fake_client.chat.completions.create.call_count, 2)
+        caps = [
+            call.kwargs["max_tokens"]
+            for call in fake_client.chat.completions.create.call_args_list
+        ]
+        self.assertEqual(caps, [400, 800])
+
+    def test_two_empty_responses_return_an_error(self):
+        r, fake_client = make_rewriter_with_fake_client(responses=["", ""])
+        text, error = r.generate_text("sys", "user", max_tokens=400)
+
+        self.assertIsNone(text)
+        self.assertEqual(error, "empty response from model")
+        self.assertEqual(fake_client.chat.completions.create.call_count, 2)
+
+    def test_real_error_is_not_retried(self):
+        r, fake_client = make_rewriter_with_fake_client(
+            raise_exc=RuntimeError("429 rate limit")
+        )
+        text, error = r.generate_text("sys", "user", max_tokens=400)
+
+        self.assertIsNone(text)
+        self.assertIn("429", error)
+        self.assertEqual(fake_client.chat.completions.create.call_count, 1)
+
+    def test_retry_budget_is_capped(self):
+        r, fake_client = make_rewriter_with_fake_client(responses=["", "hello"])
+        r.generate_text("sys", "user", max_tokens=3000)
+        caps = [
+            call.kwargs["max_tokens"]
+            for call in fake_client.chat.completions.create.call_args_list
+        ]
+        self.assertEqual(caps, [3000, 4000])
+
+
 class SummaryRewriteTests(unittest.TestCase):
     """C7: the professional summary is rewritten under the same claim guard."""
 
