@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Eye, EyeOff, ArrowRight, CheckCircle, Zap, ArrowLeft } from "lucide-react"
 import type { Page } from "../types"
 import * as api from "../api"
@@ -69,6 +69,14 @@ export default function Auth({ mode, navigate, onLogin }: AuthProps) {
   const [password, setPassword] = useState("")
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
+  // E3: an instance can close sign-ups once its owner has an account.
+  const [registrationEnabled, setRegistrationEnabled] = useState(true)
+
+  useEffect(() => {
+    api.getPublicConfig()
+      .then(config => setRegistrationEnabled(config.registration_enabled))
+      .catch(() => { /* keep the form; the server still rejects sign-ups */ })
+  }, [])
 
   const validate = () => {
     const e: Record<string, string> = {}
@@ -178,15 +186,36 @@ export default function Auth({ mode, navigate, onLogin }: AuthProps) {
             {isLogin ? "Sign in to your account" : "Create your free account"}
           </h1>
           <p className="text-mid text-sm mb-8">
-            {isLogin ? "Don't have an account? " : "Already have an account? "}
-            <button
-              onClick={() => navigate(isLogin ? "register" : "login")}
-              className="text-teal font-medium hover:underline"
-            >
-              {isLogin ? "Sign up free" : "Sign in"}
-            </button>
+            {isLogin && !registrationEnabled ? (
+              "Sign-ups are closed on this instance."
+            ) : (
+              <>
+                {isLogin ? "Don't have an account? " : "Already have an account? "}
+                <button
+                  onClick={() => navigate(isLogin ? "register" : "login")}
+                  className="text-teal font-medium hover:underline"
+                >
+                  {isLogin ? "Sign up free" : "Sign in"}
+                </button>
+              </>
+            )}
           </p>
 
+          {!isLogin && !registrationEnabled ? (
+            <div className="rounded-xl border border-edge bg-surface p-5">
+              <p className="text-sm font-semibold text-navy mb-1">Sign-ups are closed on this instance.</p>
+              <p className="text-sm text-mid leading-relaxed">
+                Ask the person running this instance to create your account, or sign in if you
+                already have one.
+              </p>
+              <button
+                onClick={() => navigate("login")}
+                className="mt-4 w-full py-3 bg-navy text-white font-semibold rounded-xl text-sm hover:bg-navy-light transition-all"
+              >
+                Go to sign in
+              </button>
+            </div>
+          ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             {!isLogin && (
               <InputField
@@ -240,6 +269,7 @@ export default function Auth({ mode, navigate, onLogin }: AuthProps) {
               )}
             </button>
           </form>
+          )}
 
           <div className="mt-8 pt-6 border-t border-edge">
             <p className="text-center text-xs text-dim leading-relaxed">

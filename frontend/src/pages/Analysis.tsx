@@ -524,6 +524,11 @@ export default function Analysis({ navigate, addToast }: PageProps) {
     .map(rewrite => (typeof rewrite === "object" ? rewrite.error : undefined))
     .find(Boolean)
   const hasAiErrors = aiErrorEntries.length > 0
+  // E4: what happened to the AI step, so the page never implies text was sent
+  // when the user (or the server) opted out.
+  const aiRewriting = report?.ai_rewriting
+  const aiSkipped = aiRewriting?.reason === "disabled_by_user"
+    || aiRewriting?.reason === "disabled_by_server"
   const grammarIssues = (report?.grammar?.typos_found ?? []).map(typo => ({ wrong: typo.word, right: typo.suggestion, context: `Found in the uploaded resume`, line: null }))
   // Older saved analyses have no flags -> treated as available. New ones set score_available=false
   // when there is no job description (keywords) or no bullets were parsed (bullet impact).
@@ -921,6 +926,21 @@ export default function Analysis({ navigate, addToast }: PageProps) {
           </div>
           <div className="p-5 space-y-4">
             <p className="text-sm text-mid">Weakest bullets, rewritten in two intensities. Accept a rewrite to use it in your export, edit it first if you like, or keep your original. Nothing changes until you decide.</p>
+            {aiRewriting?.reason === "ran" && (
+              <p className="text-xs text-mid bg-off rounded-lg px-3 py-2">
+                {aiRewriting.bullets_sent} bullet line{aiRewriting.bullets_sent === 1 ? "" : "s"} sent to{" "}
+                {aiRewriting.provider ?? "your AI provider"}
+                {aiRewriting.model ? ` (${aiRewriting.model})` : ""}. Nothing is applied until you accept it.
+              </p>
+            )}
+            {aiSkipped && (
+              <p className="text-xs text-mid bg-off rounded-lg px-3 py-2">
+                AI rewriting was {aiRewriting?.reason === "disabled_by_server"
+                  ? "disabled on this instance"
+                  : "turned off for this analysis"}, so no resume text left this machine. The ATS,
+                keyword, bullet, and grammar checks above are complete.
+              </p>
+            )}
             {hasAiErrors && <p className="text-xs text-dim">AI suggestions couldn't be generated for some bullets{aiErrorCause ? `: ${aiErrorCause}.` : " (the AI service didn't respond)."} Re-analyze to try again.</p>}
             {rewrites.length > 0
               ? rewrites.map(r => (
@@ -932,7 +952,11 @@ export default function Analysis({ navigate, addToast }: PageProps) {
                   onDecide={(action, text) => handleRewriteDecision(r.original, action, text)}
                 />
               ))
-              : <div className="rounded-xl border border-amber/20 bg-amber/5 p-4 text-sm text-mid">AI rewrites are unavailable for this analysis. Check the backend AI configuration and run the analysis again; rule-based suggestions remain available in the bullet cards above.</div>}
+              : aiSkipped
+                ? null
+                : <div className="rounded-xl border border-amber/20 bg-amber/5 p-4 text-sm text-mid">{aiRewriting?.reason === "no_flagged_bullets"
+                  ? "No bullets were flagged for rewriting — your wording already looks fine."
+                  : "AI rewrites are unavailable for this analysis. Check the backend AI configuration and run the analysis again; rule-based suggestions remain available in the bullet cards above."}</div>}
           </div>
         </div>
 

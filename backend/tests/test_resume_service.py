@@ -1008,6 +1008,121 @@ class ConfirmKeywordsPersistenceTests(unittest.TestCase):
             self.assertEqual(kwargs["missing_keywords"], ["SQL", "Linux"])
 
 
+class AiOptOutTests(unittest.TestCase):
+    """E4: resume text only reaches the AI provider with explicit consent."""
+
+    def setUp(self):
+        self.service = ResumeService(MagicMock())
+        self.service.ats_checker = MagicMock()
+        self.service.ats_checker.check.return_value = {
+            "score": 80.0, "passed": [], "issues": [],
+        }
+        self.service.grammar = MagicMock()
+        self.service.grammar.check.return_value = {"score": None}
+        self.service.kw_engine = MagicMock()
+        self.service.bullet_analyzer = MagicMock()
+        self.service.bullet_analyzer.analyze_bullets.return_value = {
+            "score": 40.0,
+            "score_available": True,
+            "details": [{
+                "original": "Did tasks for the team",
+                "has_metrics": False,
+                "verb_type": "weak",
+            }],
+        }
+        self.service.ai = MagicMock()
+        self.service.ai.provider = "groq"
+        self.service.ai.model = "test-model"
+        self.service.ai.client = object()
+        self.service.ai.rewrite_bullets.return_value = {
+            "Did tasks for the team": {
+                "ai_output": "Led 5-member team", "source": "groq",
+            },
+        }
+        self.resume = Resume(
+            id=uuid4(),
+            user_id=uuid4(),
+            filename="r.pdf",
+            file_path="r.pdf",
+            file_type=".pdf",
+            raw_text="Did tasks for the team",
+            parsed_data={"sections": {"experience_parsed": [{
+                "title": "Dev", "company": "Acme", "dates": "2024",
+                "bullets": ["Did tasks for the team"],
+            }]}, "metadata": {}},
+        )
+        self.service.session.get.side_effect = (
+            lambda model, _id: self.resume if model is Resume else None
+        )
+
+    def _analyze(self, **kwargs):
+        return self.service.analyze(
+            self.resume.id, self.resume.user_id, **kwargs
+        )
+
+    def test_opt_out_never_calls_the_provider(self):
+        analysis = self._analyze(use_ai=False)
+
+        self.service.ai.rewrite_bullets.assert_not_called()
+        self.assertEqual(analysis.report["ai_rewritten_examples"], {})
+        info = analysis.report["ai_rewriting"]
+        self.assertFalse(info["enabled"])
+        self.assertEqual(info["reason"], "disabled_by_user")
+        self.assertEqual(info["flagged_bullets"], 1)
+        self.assertEqual(info["bullets_sent"], 0)
+        self.assertIsNone(analysis.report["improvement"])
+
+    def test_server_switch_overrides_the_client_request(self):
+        with patch("app.resume.service.get_settings") as settings:
+            settings.return_value.ai_rewriting_enabled = False
+            analysis = self._analyze(use_ai=True)
+
+        self.service.ai.rewrite_bullets.assert_not_called()
+        self.assertEqual(
+            analysis.report["ai_rewriting"]["reason"], "disabled_by_server"
+        )
+
+    def test_enabled_analysis_records_what_was_sent(self):
+        analysis = self._analyze()
+
+        self.service.ai.rewrite_bullets.assert_called_once()
+        info = analysis.report["ai_rewriting"]
+        self.assertTrue(info["enabled"])
+        self.assertEqual(info["reason"], "ran")
+        self.assertEqual(info["flagged_bullets"], 1)
+        self.assertEqual(info["bullets_sent"], 1)
+        self.assertEqual(info["provider"], "groq")
+        self.assertEqual(info["model"], "test-model")
+        self.assertIn("Did tasks for the team", analysis.report["ai_rewritten_examples"])
+
+    def test_unconfigured_provider_skips_the_request(self):
+        self.service.ai.client = None
+        analysis = self._analyze()
+
+        self.service.ai.rewrite_bullets.assert_not_called()
+        self.assertEqual(
+            analysis.report["ai_rewriting"]["reason"], "not_configured"
+        )
+
+    def test_nothing_flagged_reports_no_ai_step(self):
+        self.service.bullet_analyzer.analyze_bullets.return_value = {
+            "score": 90.0,
+            "score_available": True,
+            "details": [{
+                "original": "Did tasks for the team",
+                "has_metrics": True,
+                "verb_type": "strong",
+            }],
+        }
+        analysis = self._analyze()
+
+        self.service.ai.rewrite_bullets.assert_not_called()
+        info = analysis.report["ai_rewriting"]
+        self.assertFalse(info["enabled"])
+        self.assertEqual(info["reason"], "no_flagged_bullets")
+        self.assertEqual(info["flagged_bullets"], 0)
+
+
 class PdfExportServiceTests(unittest.TestCase):
     """D5: the service wires the PDF exporter with the same tailored inputs."""
 

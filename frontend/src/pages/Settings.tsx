@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { User, Key, Bell, Moon, Save, Zap } from "lucide-react"
+import { User, Key, Bell, Moon, Save, Zap, ShieldCheck } from "lucide-react"
 import type { PageProps } from "../types"
 import * as api from "../api"
 
@@ -30,6 +30,8 @@ export default function Settings({ addToast }: PageProps) {
   const [currentPw, setCurrentPw] = useState("")
   const [newPw, setNewPw] = useState("")
   const [aiStatus, setAIStatus] = useState<api.AIStatus | null>(null)
+  // E4: browser-local opt-out; the server enforces its own switch on top.
+  const [aiEnabled, setAiEnabled] = useState(api.getAiRewritingPreference)
   const [darkMode, setDarkMode] = useState(false)
   const [emailNotifs, setEmailNotifs] = useState(true)
   const [savingProfile, setSavingProfile] = useState(false)
@@ -72,6 +74,16 @@ export default function Settings({ addToast }: PageProps) {
     } finally {
       setSavingPw(false)
     }
+  }
+
+  const serverAiEnabled = aiStatus?.rewriting_enabled !== false
+  const toggleAi = () => {
+    const next = !aiEnabled
+    setAiEnabled(next)
+    api.setAiRewritingPreference(next)
+    addToast("info", next
+      ? "AI rewriting on — new analyses may send flagged bullets to your AI provider."
+      : "AI rewriting off — new analyses will stay on this machine.")
   }
 
   const initials = name
@@ -178,6 +190,49 @@ export default function Settings({ addToast }: PageProps) {
               </div>
               <p className="text-xs text-dim">Set the provider key in `backend/.env`, then restart the backend. The key is not exposed through this page.</p>
             </div>
+          </Section>
+
+          {/* E4: privacy notice + AI opt-out */}
+          <Section title="Privacy & Data">
+            <div className="flex items-start gap-3 p-4 rounded-xl mb-5" style={{ background: "rgba(27,42,74,0.04)", border: "1px solid rgba(27,42,74,0.08)" }}>
+              <ShieldCheck size={16} className="text-teal mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm font-medium text-navy mb-0.5">What leaves this machine</p>
+                <p className="text-xs text-mid leading-relaxed">
+                  ATS, keyword, bullet, and grammar checks always run locally. Only AI rewriting
+                  sends data out: up to 8 flagged bullet lines, the target job title, and skill
+                  names go to your configured provider. Your contact details and the rest of the
+                  resume are not sent.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-navy">AI bullet rewriting</p>
+                <p className="text-xs text-dim">
+                  {serverAiEnabled
+                    ? "Turn this off to keep every analysis on this machine. Rule-based suggestions still appear."
+                    : "Disabled on this instance — no resume text is sent to any AI provider."}
+                </p>
+              </div>
+              <button
+                onClick={toggleAi}
+                disabled={!serverAiEnabled}
+                aria-pressed={aiEnabled && serverAiEnabled}
+                className={`relative w-11 h-6 rounded-full transition-all duration-200 shrink-0 ${
+                  aiEnabled && serverAiEnabled ? "bg-teal" : "bg-edge"
+                } ${serverAiEnabled ? "" : "opacity-50 cursor-not-allowed"}`}
+              >
+                <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-all duration-200 ${
+                  aiEnabled && serverAiEnabled ? "left-6" : "left-1"
+                }`} />
+              </button>
+            </div>
+            <p className="text-xs text-dim mt-4">
+              This preference is stored in this browser and applies to new analyses. You can also
+              switch it off right before an analysis on the Upload page.
+            </p>
           </Section>
 
           {/* Preferences */}

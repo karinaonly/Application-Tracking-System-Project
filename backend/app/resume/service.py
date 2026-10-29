@@ -15,7 +15,7 @@ from app.analyzer.ats_checker import ATSCompatibilityChecker
 from app.analyzer.keyword_engine import KeywordEngine
 from app.analyzer.bullet_analyzer import BulletAnalyzer
 from app.analyzer.grammar_checker import GrammarChecker
-from app.analyzer.ai_rewriter import AIRewriter
+from app.analyzer.ai_rewriter import AIRewriter, MAX_BULLETS_PER_CALL
 from app.analyzer.scoring import compute_overall
 from app.export.docx_exporter import DocxExporter
 from app.export.pdf_exporter import PdfExporter
@@ -155,7 +155,13 @@ class ResumeService:
             stem = stem[:100].rstrip(" .")
         return f"{stem or 'resume'}{ext}"
 
-    def analyze(self, resume_id: UUID, user_id: UUID, job_id: UUID | None = None) -> ResumeAnalysis:
+    def analyze(
+        self,
+        resume_id: UUID,
+        user_id: UUID,
+        job_id: UUID | None = None,
+        use_ai: bool = True,
+    ) -> ResumeAnalysis:
         resume = self.session.get(Resume, resume_id)
         if not resume or resume.user_id != user_id:
             raise ResumeNotFoundError()
@@ -221,12 +227,42 @@ class ResumeService:
             b["original"] for b in bullet_res.get("details", [])
             if not b["has_metrics"] or b["verb_type"] == "weak"
         ][:MAX_BULLETS_TO_REWRITE]
-        rewritten = self.ai.rewrite_bullets(
-            flagged,
-            target_role=target_role,
-            matched_keywords=kw_res.get("matched_keywords", []),
-            missing_keywords=kw_res.get("missing_keywords", []),
-        ) if flagged else {}
+
+        # E4: AI rewriting is opt-out. Resume text may only leave the machine
+        # when the server switch is on AND the user asked for it. The rest of
+        # the analysis (ATS, bullets, keywords, grammar) is always local.
+        ai_info = {
+            "enabled": False,
+            "reason": "no_flagged_bullets",
+            "flagged_bullets": len(flagged),
+            "bullets_sent": 0,
+            "provider": None,
+            "model": None,
+        }
+        rewritten: dict = {}
+        if flagged:
+            if not get_settings().ai_rewriting_enabled:
+                ai_info["reason"] = "disabled_by_server"
+            elif not use_ai:
+                ai_info["reason"] = "disabled_by_user"
+            elif getattr(self.ai, "client", None) is None:
+                # No key configured: the rewriter would only return fallbacks.
+                ai_info["reason"] = "not_configured"
+            else:
+                rewritten = self.ai.rewrite_bullets(
+                    flagged,
+                    target_role=target_role,
+                    matched_keywords=kw_res.get("matched_keywords", []),
+                    missing_keywords=kw_res.get("missing_keywords", []),
+                )
+                ai_info.update({
+                    "enabled": True,
+                    "reason": "ran",
+                    # MAX_BULLETS_PER_CALL caps what actually goes in the request.
+                    "bullets_sent": min(len(flagged), MAX_BULLETS_PER_CALL),
+                    "provider": self._ai_name("provider"),
+                    "model": self._ai_name("model"),
+                })
 
         # D1: before/after re-scoring — re-run the analyzers on the tailored
         # text (only rewrites that actually changed a bullet) so the report can
@@ -251,6 +287,9 @@ class ResumeService:
                 "keyword_analysis": kw_res,
                 "grammar": grammar_res,
                 "ai_rewritten_examples": rewritten,
+                # E4: what happened to the AI step, so the UI can say whether
+                # any resume text left the machine and why.
+                "ai_rewriting": ai_info,
                 "improvement": improvement,
             }
         )
@@ -266,6 +305,11 @@ class ResumeService:
         'React.js, NestJS,\\nand MySQL'). Returns text unchanged if not found."""
         pattern = r"\s+".join(re.escape(w) for w in original.split())
         return re.sub(pattern, lambda _m: replacement, text, count=1)
+
+    def _ai_name(self, attribute: str) -> str | None:
+        """Provider/model name for the report, or None when unavailable."""
+        value = getattr(self.ai, attribute, None)
+        return value if isinstance(value, str) and value else None
 
     def _score_improvement(
         self,

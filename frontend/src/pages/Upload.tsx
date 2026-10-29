@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react"
-import { Upload as UploadIcon, FileText, Trash2, BarChart2, Download, CheckCircle, AlertCircle, Plus } from "lucide-react"
+import { Upload as UploadIcon, FileText, Trash2, BarChart2, Download, CheckCircle, AlertCircle, Plus, ShieldCheck } from "lucide-react"
 import type { PageProps } from "../types"
 import * as api from "../api"
 
@@ -31,12 +31,29 @@ export default function UploadPage({ navigate, addToast }: PageProps) {
   const [selectedJobId, setSelectedJobId] = useState<string>()
   const inputRef = useRef<HTMLInputElement>(null)
   const activeJobId = selectedJobId ?? jobs[0]?.id
+  // E4: resume text is only sent to the AI provider when the user leaves this
+  // on AND the server allows it. Everything else runs locally either way.
+  const [aiEnabled, setAiEnabled] = useState(api.getAiRewritingPreference)
+  const [serverAiEnabled, setServerAiEnabled] = useState(true)
+  const aiActive = aiEnabled && serverAiEnabled
 
   useEffect(() => {
     Promise.all([api.listJobs(), api.listResumes()]).then(([loadedJobs, loadedResumes]) => {
       setJobs(loadedJobs); setResumes(loadedResumes)
     }).catch(error => addToast("error", error.message))
+    api.getPublicConfig()
+      .then(config => setServerAiEnabled(config.ai_rewriting_enabled))
+      .catch(() => { /* keep the default; the server still enforces its switch */ })
   }, [addToast])
+
+  const toggleAi = () => {
+    const next = !aiEnabled
+    setAiEnabled(next)
+    api.setAiRewritingPreference(next)
+    addToast("info", next
+      ? "AI rewriting on — flagged bullets will be sent to your AI provider."
+      : "AI rewriting off — analyses will stay on this machine.")
+  }
 
   const handleFile = async (file: File) => {
     const ext = file.name.split(".").pop()?.toUpperCase() ?? "PDF"
@@ -55,7 +72,7 @@ export default function UploadPage({ navigate, addToast }: PageProps) {
     setAnalyzing(true)
     addToast("info", "Analyzing your resume against the selected job description…")
     try {
-      const analysis = await api.analyzeResume(uploaded.id, activeJobId)
+      const analysis = await api.analyzeResume(uploaded.id, activeJobId, aiActive)
       api.saveLastAnalysisId(analysis.id); api.saveLastResumeId(uploaded.id)
       api.saveLastResumeMeta(uploaded.name, jobs.find(job => job.id === activeJobId)?.title)
       navigate("analysis")
@@ -162,6 +179,30 @@ export default function UploadPage({ navigate, addToast }: PageProps) {
                 <><BarChart2 size={15} /> Proceed to Analysis</>
               )}
             </button>
+
+            {/* E4: privacy notice + opt-out, visible before analysis runs */}
+            <div className="mt-4 pt-4 border-t border-edge flex items-start gap-3">
+              <ShieldCheck size={16} className={`mt-0.5 shrink-0 ${aiActive ? "text-teal" : "text-mid"}`} />
+              <div className="flex-1">
+                <p className="text-xs font-medium text-navy">
+                  AI rewriting is {aiActive ? "on" : "off"}
+                  {!serverAiEnabled && " (disabled on this instance)"}
+                </p>
+                <p className="text-xs text-mid leading-relaxed mt-0.5">
+                  {serverAiEnabled
+                    ? "When on, up to 8 flagged bullet lines, the target job title, and skill names are sent to your configured AI provider. Your contact details and the rest of the resume are not. ATS, keyword, bullet, and grammar checks always run locally."
+                    : "This instance is configured to keep all resume text on this machine. Analysis still runs locally; AI rewrite suggestions are skipped."}
+                  {serverAiEnabled && (
+                    <>
+                      {" "}
+                      <button onClick={toggleAi} className="text-teal font-medium hover:underline">
+                        {aiEnabled ? "Turn off AI rewriting" : "Turn on AI rewriting"}
+                      </button>
+                    </>
+                  )}
+                </p>
+              </div>
+            </div>
           </div>
         )}
 

@@ -8,6 +8,7 @@ from fastapi import HTTPException, status
 from app.config.settings import get_settings
 from app.auth.models import User
 from app.auth.schemas import UserRegister, ProfileUpdate, PasswordChange
+from app.auth.throttle import login_throttle, throttle_key
 
 MIN_PASSWORD_LENGTH = 8
 
@@ -30,6 +31,18 @@ class AuthService:
         return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
     def register(self, data: UserRegister) -> User:
+        # E3: the same password policy as change-password, and an operator can
+        # close sign-ups once the owner's account exists.
+        if not get_settings().allow_registration:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Registration is disabled on this instance.",
+            )
+        if len(data.password) < MIN_PASSWORD_LENGTH:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters",
+            )
         exists = self.session.exec(select(User).where(User.email == data.email)).first()
         if exists:
             raise HTTPException(status_code=400, detail="Email already registered")
@@ -43,10 +56,26 @@ class AuthService:
         self.session.refresh(user)
         return user
 
-    def login(self, email: str, password: str) -> User:
+    def login(self, email: str, password: str, client: str | None = None) -> User:
+        # E3: reject repeated failures before touching the password hash, so
+        # the endpoint cannot be used as an offline-speed oracle.
+        key = throttle_key(email, client)
+        wait = login_throttle.retry_after(key)
+        if wait:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=(
+                    "Too many failed sign-in attempts. Try again in "
+                    f"{max(1, wait // 60)} minute(s)."
+                ),
+                headers={"Retry-After": str(wait)},
+            )
+
         user = self.session.exec(select(User).where(User.email == email)).first()
         if not user or not self.verify_password(password, user.hashed_password):
+            login_throttle.record_failure(key)
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        login_throttle.reset(key)
         return user
 
     def update_profile(self, user: User, data: ProfileUpdate) -> User:

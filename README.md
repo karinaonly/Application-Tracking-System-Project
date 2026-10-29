@@ -32,6 +32,10 @@ plus AI rewrites that are stored, auditable, and never invent experience you don
   junk). A deterministic parser extracts required/preferred skills, tools, seniority,
   and min years of experience on save.
 - **Auth** — JWT-based accounts; everything you store is scoped to your user.
+  Login is rate-limited, and sign-ups can be closed on a local instance.
+- **Privacy controls** — AI rewriting is opt-in per browser (and can be disabled
+  server-wide); the UI states exactly what would be sent, and the rest of the
+  analysis always runs locally.
 
 ## Tech stack
 
@@ -56,7 +60,7 @@ backend/
     parser/        # text extraction + section parsing
     common/        # shared skills taxonomy, exceptions
     config/        # settings, database
-  tests/           # 334 unittest tests
+  tests/           # 348 unittest tests
 frontend/
   src/
     pages/         # Landing, Auth, Dashboard, Upload, Analysis, JobDescriptions, Settings
@@ -87,6 +91,10 @@ copy .env.example .env   # then fill in the values
   Generate: `python -c "import secrets; print(secrets.token_urlsafe(48))"`
 - `CORS_ORIGINS` — frontend origins allowed to call the API.
 - `DATABASE_URL` — SQLite path (defaults to `backend/ats_resume_fixer.db`).
+- `AI_REWRITING_ENABLED` — set to `false` to keep every resume on this machine
+  (no AI rewriting; the rest of the analysis still runs). Users can also switch
+  AI rewriting off per browser on the Upload/Settings pages.
+- `ALLOW_REGISTRATION` — set to `false` to close sign-ups after creating your account.
 
 Never commit the real `.env`. The repo's secret scan checks staged diffs.
 
@@ -134,5 +142,5 @@ bun run build
 
 ## Status
 
-See `ROADMAP.md` for the full prioritized backlog (70/77 done at last count) with a
+See `ROADMAP.md` for the full prioritized backlog (72/77 done at last count) with a
 change log of every batch, what the tests caught, and what remains.

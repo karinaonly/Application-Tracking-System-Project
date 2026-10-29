@@ -316,11 +316,13 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   *Fix:* allow only the frontend origin (e.g. `http://localhost:5173`).
   ✅ *Done 2026-10-26: CORS is now an explicit allowlist (`CORS_ORIGINS` env, defaults to localhost:8443/5173). Verified live: preflight from `localhost:8443` returns 200 with the origin echoed; `http://evil.example` is rejected with 400. If you preview the frontend from another origin, add it to `CORS_ORIGINS`.*
 
-- [ ] **E3 (P2): Decide whether auth is needed at all**
+- [x] **E3 (P2): Decide whether auth is needed at all**
   Single-user local app. Either remove auth to simplify, or keep it and harden it.
+  ✅ *Done 2026-10-29: **keep auth and harden it.** Removing it would mean deleting the per-user ownership checks on resumes, jobs, analyses, and exports — the isolation the test suite already covers — while resumes are personal data and the repo is public. Hardening shipped: registration now enforces the same 8-character minimum as password changes (it previously accepted any length); `ALLOW_REGISTRATION=false` closes sign-ups once the owner's account exists (the Auth page hides the form and `/auth/config` reports the switch); and login is rate-limited per email + client — 5 failures in 15 minutes returns 429 with `Retry-After`, while a successful sign-in resets the counter. Covered by 9 auth tests.*
 
-- [ ] **E4 (P2): Resume data privacy note**
+- [x] **E4 (P2): Resume data privacy note**
   Resume text is sent to the Gemini/OpenAI API. Add a visible notice in the UI and an option to disable AI rewriting.
+  ✅ *Done 2026-10-29: the Upload page shows exactly what would leave the machine (up to 8 flagged bullet lines, the target job title, and skill names — not contact details or the rest of the resume) with an inline on/off switch, and Settings has a Privacy & Data section with the same preference. The choice is stored in the browser and sent as `use_ai=false`, so the analysis still runs locally and the report records `ai_rewriting: {enabled, reason, flagged_bullets, bullets_sent, provider, model}`; the Analysis page states whether anything was sent and why it was skipped. A server-wide `AI_REWRITING_ENABLED=false` overrides the client so no resume text can leave even if asked. Covered by 5 analyze tests plus the live check.*
 
 - [x] **E5 (P1): SQL echo logs resume contents** · `.env`, `config/settings.py`
   Found 2026-10-23: `echo=True` in development prints every statement with bound values, so full resume text and user rows land in the console/logs.
@@ -426,9 +428,9 @@ Counts verified against the item list on 2026-10-23. (F14 is unused; numbering j
 | B. Scoring | 11 | 11 |
 | C. AI Rewriter | 13 | 12 |
 | D. Features | 8 | 6 |
-| E. Security & Config | 6 | 4 |
+| E. Security & Config | 6 | 6 |
 | F. Hygiene | 17 | 15 |
-| **Total** | **77** | **70** |
+| **Total** | **77** | **72** |
 
 Counts note: the F row previously read 12, but 13 of the 17 F items were checked before F7/F8 shipped (F10 and F12 remain), so earlier totals in the change log were one low. The table above is verified against the item list.
 
@@ -440,6 +442,7 @@ Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrit
 
 | Date | Item(s) | What changed | Notes |
 |---|---|---|---|
+| 2026-10-29 | E3, E4 | Auth stays (the data model is multi-user and resumes are personal) and is hardened: registration enforces the 8-character minimum, `ALLOW_REGISTRATION=false` closes sign-ups, and login is throttled per email + client (5 failures / 15 min → 429 with `Retry-After`, reset on success). AI rewriting is now explicit consent: the Upload page and Settings show exactly what is sent (up to 8 flagged bullets, job title, skill names) with a browser-local switch sent as `use_ai=false`; the report records `ai_rewriting` (enabled/reason/counts/provider/model) and the Analysis page explains when text stayed local. `AI_REWRITING_ENABLED=false` is a server-wide hard stop. | 348 backend tests pass (14 new auth/privacy tests); `bun run build` clean. Live check: `/auth/config` reported both switches, `use_ai=false` produced local scores with `reason=disabled_by_user` and zero rewrites, a short registration password returned 400, and the 6th failed login for a throttled email returned 429 with `Retry-After` while other emails still got 401. Counts: E 4 → 6, total 70 → 72. |
 | 2026-10-29 | D5, D6 | PDF export uses the same tailored content as DOCX (accepted rewrites, confirmed hard skills, resume's own title) and is served by the existing export endpoints via `format=docx|pdf`. The PDF is single-column, text-only, embeds at most two standard fonts, and uses Arial/DejaVu for Unicode symbols; a Helvetica fallback transliterates currencies. The new ownership-checked comparison endpoint returns original vs. tailored sections plus the accepted `changes`, and the Analysis page shows them side by side in a modal that highlights replaced bullets. Shared content rules moved to `export/content.py` so DOCX and PDF cannot drift. | 334 backend tests pass (15 PDF exporter, 11 service); `bun run build` clean. Live check: PDF export returned a clean 2-font single-column PDF, DOCX still worked, bad formats 400, version PDF worked, and the comparison matched the export exactly. Counts: D 4 → 6, total 68 → 70. |
 | 2026-10-29 | B9, B10 | ATS checks are no longer shallow: PDF extraction reports images, font count, icon fonts, multi-column layout, and repeated contact headers/footers (page numbers ignored); DOCX reports images/fonts too. The checker flags images/icons, icon/multiple fonts, missing experience dates, and ATS-hostile filenames, with multi-column as critical. Also fixed `sec.header.text` failing every DOCX parse. The overall score now uses documented ATS 30 / Bullets 30 / Keywords 30 / Grammar 10 weights (sum 1.0) and includes grammar in both the report and the improvement projection; the UI shows a Grammar row and the actual weighting. | 308 backend tests pass (9 new scoring tests, 14 new ATS-checker tests, 9 new extractor tests with generated PDFs/DOCX); `bun run build` clean. Live check on a generated 2-page two-column PDF fired the layout/image/filename checks, and a no-job analysis used `{ats: .75, grammar: .25}` with matching overall math. Counts: B 9 → 11, total 66 → 68. |
 | 2026-10-29 | F8, F7 | The Analysis page now stores only resume/analysis ids and reloads the report from `GET /resumes/{resume_id}/analyses/{analysis_id}` (ownership-checked, 404 for cross-resume/unknown ids), with a loading state and React-state updates after keyword/rewrite confirmations. Dashboard/Upload write the ids; Dashboard's "View latest report" opens the newest analyzed file. The Figma Make scaffold is gone: package renamed to `ats-resume-optimizer`, `vite.config.ts` reduced to React + Tailwind, real `index.html` metadata, `.figma/` removed, `AGENTS.md` rewritten, static `robots.txt` added. Also fixed the B8 improvement projection so its after-score uses the same required/preferred weights as the before-score. | 279 backend tests pass (4 new analysis-fetch tests); `bun run build` clean. Counts: F 13 → 15, total 64 → 66. |

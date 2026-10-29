@@ -16,6 +16,13 @@ class Settings(BaseSettings):
     ai_base_url: str = "https://api.groq.com/openai/v1"
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
     ai_timeout_seconds: int = 20
+    # E4: server-wide hard switch. When false, resume text is never sent to an
+    # AI provider -- the analysis still runs locally and says why rewrites are
+    # unavailable. Users can also opt out per analysis from the UI.
+    ai_rewriting_enabled: bool = True
+    # E3: keep auth (the data model is multi-user and resumes are personal),
+    # but let a local instance close sign-ups after the owner registers.
+    allow_registration: bool = True
     # E1: no insecure default -- the secret must come from .env (see validate_security_settings)
     jwt_secret: str = ""
     jwt_algorithm: str = "HS256"

@@ -79,11 +79,13 @@ def upload_resume(
 def analyze_resume(
     resume_id: UUID,
     job_id: UUID | None = None,
+    # E4: the UI can opt out of AI rewriting; the local analysis still runs.
+    use_ai: bool = True,
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
     service = ResumeService(session)
-    return service.analyze(resume_id, user.id, job_id)
+    return service.analyze(resume_id, user.id, job_id, use_ai=use_ai)
 
 @router.get("/{resume_id}/analyses/{analysis_id}")
 def get_analysis(

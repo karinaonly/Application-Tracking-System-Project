@@ -114,6 +114,16 @@ export interface ResumeAnalysis {
     rewrite_decisions?: Record<string, { action: "accepted" | "rejected"; text?: string }>
     grammar?: { score?: number; typos_found?: Array<{ word: string; suggestion: string }> }
     ai_rewritten_examples?: Record<string, string | { moderate?: string; aggressive?: string; ai_output?: string; source?: string; error?: string; guard?: { status: string; reasons: string[]; retried: boolean; rejected_variants?: string[] } }>
+    // E4: what happened to the AI step. `reason` is "ran", "disabled_by_user",
+    // "disabled_by_server", "not_configured", or "no_flagged_bullets".
+    ai_rewriting?: {
+      enabled: boolean
+      reason: "ran" | "disabled_by_user" | "disabled_by_server" | "not_configured" | "no_flagged_bullets"
+      flagged_bullets: number
+      bullets_sent: number
+      provider: string | null
+      model: string | null
+    }
     overall_score?: number
     weights_used?: Record<string, number>
     // D1: before/after re-scoring of the AI-tailored bullets. Absent when no
@@ -133,6 +143,18 @@ export interface AIStatus {
   model: string
   provider?: string
   reason?: "configured" | "missing" | "invalid_format" | "quota_exhausted" | "model_unavailable"
+  // E4: false means the server will never send resume text to the provider.
+  rewriting_enabled?: boolean
+}
+
+// E3: non-secret switches available before sign-in.
+export interface PublicConfig {
+  registration_enabled: boolean
+  ai_rewriting_enabled: boolean
+}
+
+export async function getPublicConfig(): Promise<PublicConfig> {
+  return request<PublicConfig>("/auth/config")
 }
 
 interface TokenResponse {
@@ -166,6 +188,20 @@ export function setToken(token: string): void {
 
 export function clearToken(): void {
   localStorage.removeItem("ats_access_token")
+}
+
+// E4: the AI-rewriting choice belongs to the person at this browser, so it is
+// a local preference rather than an account setting. Default is on (the app's
+// main feature); turning it off keeps every analysis on this machine.
+const AI_PREFERENCE_KEY = "ats_ai_rewriting_enabled"
+
+export function getAiRewritingPreference(): boolean {
+  const stored = localStorage.getItem(AI_PREFERENCE_KEY)
+  return stored === null ? true : stored === "true"
+}
+
+export function setAiRewritingPreference(enabled: boolean): void {
+  localStorage.setItem(AI_PREFERENCE_KEY, enabled ? "true" : "false")
 }
 
 export async function register(data: { email: string; password: string; full_name: string }): Promise<User> {
@@ -214,9 +250,13 @@ export async function uploadResume(file: File): Promise<{ id: string; filename: 
   return request<{ id: string; filename: string; status: string }>("/resumes/upload", { method: "POST", body: formData })
 }
 
-export async function analyzeResume(resumeId: string, jobId?: string): Promise<ResumeAnalysis> {
-  const query = jobId ? `?job_id=${encodeURIComponent(jobId)}` : ""
-  return request<ResumeAnalysis>(`/resumes/${resumeId}/analyze${query}`, { method: "POST" })
+export async function analyzeResume(resumeId: string, jobId?: string, useAi = true): Promise<ResumeAnalysis> {
+  const params = new URLSearchParams()
+  if (jobId) params.set("job_id", jobId)
+  // E4: the local analysis always runs; this only controls whether bullet
+  // text may be sent to the AI provider.
+  params.set("use_ai", useAi ? "true" : "false")
+  return request<ResumeAnalysis>(`/resumes/${resumeId}/analyze?${params.toString()}`, { method: "POST" })
 }
 
 export async function exportResume(

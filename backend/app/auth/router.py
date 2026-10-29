@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlmodel import Session, select
 from app.config.database import get_session
 from app.auth.schemas import UserRegister, UserLogin, TokenResponse, UserResponse, ProfileUpdate, PasswordChange
@@ -10,6 +10,15 @@ from app.analyzer.ai_config import resolve_ai_config
 from app.resume.models import Resume, ResumeAnalysis
 
 router = APIRouter()
+
+@router.get("/config")
+def public_config():
+    """E3/E4: non-secret switches the UI needs before anyone signs in."""
+    settings = get_settings()
+    return {
+        "registration_enabled": settings.allow_registration,
+        "ai_rewriting_enabled": settings.ai_rewriting_enabled,
+    }
 
 @router.get("/ai-status")
 def ai_status(user: User = Depends(get_current_user), session: Session = Depends(get_session)):
@@ -34,7 +43,15 @@ def ai_status(user: User = Depends(get_current_user), session: Session = Depends
             reason = "model_unavailable"
         elif any("insufficient_quota" in error or "no credits remaining" in error.lower() for error in errors):
             reason = "quota_exhausted"
-    return {"configured": configured, "reason": reason, "model": config.model, "provider": provider}
+    return {
+        "configured": configured,
+        "reason": reason,
+        "model": config.model,
+        "provider": provider,
+        # E4: a false value means no resume text leaves the machine, even if
+        # the provider is configured.
+        "rewriting_enabled": settings.ai_rewriting_enabled,
+    }
 
 @router.post("/register", response_model=UserResponse, status_code=201)
 def register(data: UserRegister, session: Session = Depends(get_session)):
@@ -42,9 +59,10 @@ def register(data: UserRegister, session: Session = Depends(get_session)):
     return service.register(data)
 
 @router.post("/login", response_model=TokenResponse)
-def login(data: UserLogin, session: Session = Depends(get_session)):
+def login(data: UserLogin, request: Request, session: Session = Depends(get_session)):
     service = AuthService(session)
-    user = service.login(data.email, data.password)
+    client = request.client.host if request.client else None
+    user = service.login(data.email, data.password, client=client)
     token = service.create_token(user.id)
     return {"access_token": token, "token_type": "bearer"}
 
