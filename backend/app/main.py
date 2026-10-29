@@ -13,7 +13,7 @@ async def lifespan(app: FastAPI):
     # E1: refuse to serve with an insecure/missing JWT secret
     validate_security_settings(get_settings())
     init_db()
-    print("✅ SQLite database initialized.")
+    print("✅ Database schema is up to date (Alembic).")
     print("🚀 ATS Resume Fixer API is live on http://127.0.0.1:8000")
     print("📚 Open Swagger Docs: http://127.0.0.1:8000/docs")
     yield
