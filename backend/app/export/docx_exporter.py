@@ -1,5 +1,4 @@
 import io
-import re
 from typing import Any
 
 import docx
@@ -10,115 +9,20 @@ from docx.enum.style import WD_STYLE_TYPE
 from docx.oxml import parse_xml
 from docx.oxml.ns import nsdecls, qn
 
-from app.common.skills import (
-    HARD_SKILLS,
-    is_soft_skill,
-    label_matches_category,
-    skill_category,
-)
-from app.common.headline import extract_headline
+from app.export.content import ResumeContentBuilder
 
 
-_CAMEL_BOUNDARY_RE = re.compile(r"[a-z][A-Z]")
-
-# Glyphs that several DOCX viewers cannot render: PDF and AI output can
-# smuggle in Unicode hyphen variants that show up as tofu boxes (□) in the
-# exported resume. They all map to a plain ASCII hyphen. En/em dashes
-# (U+2013/U+2014) are intentionally kept — Arial renders them and the parser
-# uses " — " as its canonical separator.
-_BAD_DASH_RE = re.compile(
-    r"[\u2010\u2011\u2012\u2015\u2212\uFE58\uFE63\u00AD\uFFFD]"
-)
-
-def _normalize_glyphs(text: str) -> str:
-    """Replace unrenderable dash glyphs with ASCII hyphens."""
-    return _BAD_DASH_RE.sub("-", text)
-
-
-def _normalize_layout_label(text: str) -> str:
-    """Normalize a line so it can be compared against ``LAYOUT_LABELS``.
-
-    Case, padding, a trailing colon, and hyphen-vs-space variants all collapse
-    ("Part-Time:" -> "part time"), so the label set stays readable.
-    """
-    cleaned = (text or "").strip().rstrip(":").replace("-", " ")
-    return " ".join(cleaned.lower().split())
-
-# Brand/contact names that are not in the skills taxonomy but must keep their
-# internal capital (A14 renders them; A13 must not split them).
-_EXTRA_CANONICAL_TERMS = frozenset({
-    "LinkedIn",
-    "DevOps",
-    "NestJS",
-    "OpenAPI",
-    "WordPress",
-    "SharePoint",
-})
-
-# Only terms with an intentional lower-to-upper transition need protection.
-# Longest first so "GitHub Actions" wins over "GitHub".
-CANONICAL_TECH_TERMS = tuple(sorted(
-    {name for name in HARD_SKILLS if _CAMEL_BOUNDARY_RE.search(name)}
-    | set(_EXTRA_CANONICAL_TERMS),
-    key=len,
-    reverse=True,
-))
-TECH_TERM_RE = re.compile(
-    r"(?<![A-Za-z])("
-    + "|".join(re.escape(term) for term in CANONICAL_TECH_TERMS)
-    + r")(?![A-Za-z])",
-    re.I,
-)
-
-# A3: confirmed keywords keep their canonical taxonomy spelling ("sql" ->
-# "SQL", "javascript" -> "JavaScript") instead of the lossy .title() casing
-# ("Sql") the old filter produced.
-CANONICAL_SKILL_LOOKUP = {name.lower(): name for name in HARD_SKILLS}
-
-
-class DocxExporter:
+class DocxExporter(ResumeContentBuilder):
     """
     Renders a tailored resume as a .docx using Arial typography.
     Prefers *_parsed structured sections when available.
     """
-
-    DATE_RE = re.compile(r"^\d{4}(\s*[-–—]\s*\d{4})?\b")
-    BULLET_RE = re.compile(r"^[•\-\*]\s*")
-    PLACEHOLDER_RE = re.compile(r"\[[^\]]{1,30}\]")
-    # A4: left-column labels that sometimes leak from a master-resume layout
-    # (a two-column template renders "College", "Capstone", ... as their own
-    # lines). This is a configurable set rather than a hardcoded regex, so a
-    # different template can extend or override LAYOUT_LABELS (see
-    # _is_layout_label) instead of patching a pattern.
-    LAYOUT_LABELS: frozenset[str] = frozenset({
-        "college", "senior high", "senior high school", "university",
-        "institute", "internship", "capstone", "academic", "freelance",
-        "part time", "parttime", "full time", "fulltime", "contract",
-        "volunteer", "personal", "side project",
-    })
-    # Labels that may prefix real content on the same line ("College Bachelor
-    # of Science" -> "Bachelor of Science"). Deliberately narrower than
-    # LAYOUT_LABELS: an employment type like "Contract" is part of a title.
-    LAYOUT_PREFIX_LABELS: frozenset[str] = frozenset({
-        "college", "senior high", "senior high school", "academic",
-        "capstone", "internship",
-    })
 
     FONT_FAMILY = "Arial"
     COLOR_PRIMARY_HEX = "003366"
     COLOR_PRIMARY_RGB = RGBColor(0, 51, 102)
     COLOR_BODY_RGB = RGBColor(30, 30, 30)
     COLOR_MUTED_RGB = RGBColor(80, 80, 80)
-
-    FLUFF = {
-        "development", "engineering", "working", "experience",
-        "application", "applications", "skills", "hands-on",
-        "string", "ability", "role", "system", "systems", "team",
-        "you", "your", "we", "our", "us", "they", "them", "who",
-        "what", "help", "work", "looking", "about", "join",
-        "testing", "deployment", "execution", "job", "responsibilities",
-        "proprietary", "data", "requirements", "qualifications",
-    }
 
     # ---------------------------------------------------------------- #
     # public entry point
@@ -141,10 +45,9 @@ class DocxExporter:
         # A4: the resume's own title always wins. The job posting's title is
         # only substituted when the user explicitly opts in per export —
         # otherwise the export would silently claim a role the resume doesn't.
-        resume_title = (c.get("title") or "").strip() or extract_headline(
-            sections.get("contact", {}).get("raw", ""), c.get("name", "")
+        self._add_header(
+            doc, c, target_role, self.resume_title(sections), match_title
         )
-        self._add_header(doc, c, target_role, resume_title, match_title)
 
         if sections.get("summary", {}).get("raw"):
             self._heading(doc, "SUMMARY")
@@ -311,25 +214,7 @@ class DocxExporter:
         p_cnt.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p_cnt.paragraph_format.space_after = Pt(6)
 
-        parts: list[tuple[str | None, str]] = []
-        if c.get("email"):
-            parts.append((f"mailto:{c['email']}", c["email"]))
-        if c.get("phone"):
-            parts.append((None, c["phone"]))
-        if c.get("location"):
-            parts.append((None, c["location"]))
-        if c.get("portfolio"):
-            url = c["portfolio"]
-            full_url = url if url.startswith("http") else f"https://{url}"
-            parts.append((full_url, url))
-        if c.get("linkedin"):
-            url = c["linkedin"]
-            full_url = url if url.startswith("http") else f"https://{url}"
-            parts.append((full_url, url))
-        if c.get("github"):
-            url = c["github"]
-            full_url = url if url.startswith("http") else f"https://{url}"
-            parts.append((full_url, url))
+        parts = self.contact_parts(c)
 
         for i, (url, text) in enumerate(parts):
             if i > 0:
@@ -391,10 +276,9 @@ class DocxExporter:
     # ---------------------------------------------------------------- #
 
     def _add_flow_text(self, doc, text: str):
-        lines = self._clean_lines(text)
-        if not lines:
+        joined = self.summary_text(text)
+        if not joined:
             return
-        joined = re.sub(r"\s+", " ", " ".join(lines)).strip()
         p = doc.add_paragraph(joined)
         p.paragraph_format.space_after = Pt(4)
         p.paragraph_format.line_spacing = 1.08
@@ -414,17 +298,11 @@ class DocxExporter:
           Degree - honors
           extra detail lines
         """
-        dates = (entry.get("dates") or "").strip()
-        school = (entry.get("school") or "").strip()
-        degree = (entry.get("degree") or "").strip()
-        details = entry.get("details") or []
-
-        # Peel any label that still sneaked in
-        school = re.sub(r"^(College|Senior\s*High|University)\s+", "", school, flags=re.I).strip()
-        degree = re.sub(r"^(College|Senior\s*High|University)\s+", "", degree, flags=re.I).strip()
-
-        primary = school or degree
-        secondary = degree if school else ""
+        parts = self.education_parts(entry)
+        primary = parts["primary"]
+        secondary = parts["secondary"]
+        dates = parts["dates"]
+        details = parts["details"]
         if not primary:
             return
 
@@ -469,17 +347,13 @@ class DocxExporter:
     # ---------------------------------------------------------------- #
 
     def _add_structured_entry(self, doc, entry: dict, rewritten: dict | None):
-        title = (entry.get("title") or entry.get("role") or "").strip()
-        subtitle = (
-            entry.get("company") or entry.get("subtitle") or ""
-        ).strip()
-        dates = (entry.get("dates") or "").strip()
+        parts = self.entry_parts(entry)
+        title = parts["title"]
+        subtitle = parts["subtitle"]
+        dates = parts["dates"]
         bullets = entry.get("bullets") or []
 
-        # Skip pure label leftovers
-        if title and self._is_layout_label(title) and not subtitle:
-            title, subtitle = subtitle, ""
-        if not title and not subtitle and not bullets:
+        if not title and not bullets:
             return
 
         p = doc.add_paragraph()
@@ -491,17 +365,15 @@ class DocxExporter:
                 self.page_width, WD_TAB_ALIGNMENT.RIGHT
             )
 
-        r_title = p.add_run(title or subtitle)
+        r_title = p.add_run(title)
         self._force_font(r_title, size_pt=9.5, bold=True, color=self.COLOR_BODY_RGB)
-        if not title and subtitle:
-            subtitle = ""  # already used as title
 
         if dates:
             p.add_run("\t")
             r_date = p.add_run(dates)
             self._force_font(r_date, size_pt=9, color=self.COLOR_MUTED_RGB)
 
-        if subtitle and not self._is_layout_label(subtitle):
+        if subtitle:
             p2 = doc.add_paragraph()
             p2.paragraph_format.space_before = Pt(0)
             p2.paragraph_format.space_after = Pt(1)
@@ -510,45 +382,7 @@ class DocxExporter:
                 r_sub, size_pt=9, italic=True, color=self.COLOR_MUTED_RGB
             )
 
-        merged: list[str] = []
-        for b in bullets:
-            text = self.BULLET_RE.sub("", (b or "")).strip()
-            if not text:
-                continue
-            if rewritten and b in rewritten:
-                replacement = self._rewrite_text(rewritten[b])
-                if replacement:
-                    text = replacement
-
-            # Fix: unrenderable Unicode hyphens (U+2011 etc.) from PDF/AI text
-            # render as tofu boxes in DOCX viewers — normalize to ASCII.
-            text = _normalize_glyphs(text)
-            # FIX: Ensure missing spaces from AI rewrites or PDF gluing are patched
-            text = re.sub(r"\b(platform)(using)\b", r"\1 \2", text, flags=re.I)
-            text = self._split_unknown_camel_case(text)
-            text = re.sub(r"\s{2,}", " ", text).strip()
-
-            should_merge = False
-            if merged:
-                if text[0].islower():
-                    should_merge = True
-                elif re.match(
-                    r"^(and|or|with|using|to|for|which|that|ensuring|"
-                    r"delivering|automating|keeping|writing|wiring|"
-                    r"process|collision|respond)\b",
-                    text,
-                    re.I,
-                ):
-                    should_merge = True
-                elif len(text) < 50 and text.endswith("."):
-                    should_merge = True
-
-            if should_merge:
-                merged[-1] += " " + text
-            else:
-                merged.append(text)
-
-        for text in merged:
+        for text in self.entry_bullets(bullets, rewritten):
             bp = doc.add_paragraph(text, style="ResumeBullet")
             for run in bp.runs:
                 self._force_font(run, size_pt=9.5, color=self.COLOR_BODY_RGB)
@@ -598,14 +432,11 @@ class DocxExporter:
     # ---------------------------------------------------------------- #
 
     def _add_skills(self, doc, text: str, missing_keywords: list[str] | None):
-        lines = self._clean_lines(text)
         # A3: only user-confirmed technical skills reach the export. They fold
         # into the matching labeled line ("Databases: MySQL, SQL"); anything
         # without a matching line falls back to "Additional Skills". Soft
         # skills never get here (see _filter_keywords).
-        leftover = self._fold_keywords_into_skills(
-            lines, self._filter_keywords(text, missing_keywords)
-        )
+        lines, leftover = self.skills_lines(text, missing_keywords)
         for line in lines:
             p = doc.add_paragraph()
             p.paragraph_format.space_after = Pt(1)
@@ -633,152 +464,6 @@ class DocxExporter:
             r_rest = p.add_run(", ".join(leftover))
             self._force_font(r_rest, size_pt=9.5, color=self.COLOR_BODY_RGB)
 
-    def _fold_keywords_into_skills(
-        self, lines: list[str], keywords: list[str]
-    ) -> list[str]:
-        """Append each keyword to its matching labeled line; return leftovers."""
-        leftover = []
-        for kw in keywords:
-            category = skill_category(kw)
-            target = None
-            if category:
-                for index, line in enumerate(lines):
-                    label, sep, _ = line.partition(":")
-                    if sep and label_matches_category(label, category):
-                        target = index
-                        break
-            if target is None:
-                leftover.append(kw)
-            else:
-                lines[target] = self._append_skill_to_line(lines[target], kw)
-        return leftover
-
-    @staticmethod
-    def _append_skill_to_line(line: str, keyword: str) -> str:
-        if ":" in line:
-            label, _, rest = line.partition(":")
-            rest = rest.strip()
-            return f"{label.strip()}: {rest + ', ' if rest else ''}{keyword}"
-        return f"{line.rstrip()}, {keyword}"
-
-    def _filter_keywords(
-        self, skills_text: str, missing_keywords: list[str] | None
-    ) -> list[str]:
-        if not missing_keywords:
-            return []
-        skills_lower = skills_text.lower()
-        out, seen = [], set()
-        for kw in missing_keywords:
-            cleaned = kw.strip().strip("-").strip("*").strip()
-            k_lower = cleaned.lower()
-            if not k_lower or k_lower in seen:
-                continue
-            # A list of soft-skill adjectives ("Innovative, Interpersonal") is
-            # unverifiable and reads like keyword stuffing — they belong in
-            # bullets, so they are never added to the skills list.
-            if is_soft_skill(cleaned):
-                continue
-            # Whole-word match, not substring: "SQL" must not be considered
-            # already listed just because the skills text says "MySQL" (this
-            # silently dropped confirmed SQL/Java whenever MySQL/JavaScript
-            # were present). Caught live on a real export.
-            present = re.compile(
-                r"(?<![A-Za-z0-9])" + re.escape(k_lower) + r"(?![A-Za-z0-9])"
-            )
-            if present.search(skills_lower):
-                continue
-            if any(f in k_lower.split() for f in self.FLUFF):
-                continue
-            if not (2 < len(k_lower) < 28):
-                continue
-            seen.add(k_lower)
-            out.append(CANONICAL_SKILL_LOOKUP.get(k_lower, cleaned))
-        return out
-
-    # ---------------------------------------------------------------- #
-    # helpers
-    # ---------------------------------------------------------------- #
-
-    def _rewrite_text(self, opt) -> str | None:
-        """Text to apply for one rewrite entry, or None to keep the original.
-
-        Accepts either a plain string (C6: what the user accepted) or the older
-        ``{"ai_output": ...}`` mapping stored on pre-C6 analyses. A rewrite with
-        an unfilled ``[X]`` placeholder is never applied.
-        """
-        if isinstance(opt, str):
-            candidate = opt.strip()
-        elif isinstance(opt, dict):
-            candidate = str(opt.get("ai_output") or "").strip()
-        else:
-            return None
-        if not candidate or self.PLACEHOLDER_RE.search(candidate):
-            return None
-        return candidate
-
-    def _apply_rewrites(self, text: str, rewritten_bullets: dict | None) -> str:
-        if not rewritten_bullets:
-            return text
-        for orig, opt in rewritten_bullets.items():
-            replacement = self._rewrite_text(opt)
-            if replacement and orig in text:
-                text = text.replace(orig, replacement)
-        return _normalize_glyphs(text)
-
-    def _split_unknown_camel_case(self, text: str) -> str:
-        """Insert spaces in glued CamelCase without corrupting known tech names.
-
-        ``JavaScript``, ``PostgreSQL``, ``MongoDB`` and friends keep their
-        spelling; unknown joins such as ``WordWord`` still become
-        ``Word Word`` so accidental PDF gluing remains readable.
-        """
-        protected_text, protected = self._protect_canonical_terms(text)
-        split_text = re.sub(r"([a-z])([A-Z])", r"\1 \2", protected_text)
-        return self._restore_canonical_terms(split_text, protected)
-
-    def _protect_canonical_terms(self, text: str) -> tuple[str, list[str]]:
-        protected: list[str] = []
-
-        def replace(match: re.Match) -> str:
-            protected.append(match.group(0))
-            return f"\x00{len(protected) - 1}\x00"
-
-        return TECH_TERM_RE.sub(replace, text), protected
-
-    def _restore_canonical_terms(self, text: str, protected: list[str]) -> str:
-        for index, term in enumerate(protected):
-            text = text.replace(f"\x00{index}\x00", term)
-        return text
-
-    def _is_layout_label(self, line: str) -> bool:
-        """True when a line is only a layout tag ("College", "Capstone")."""
-        return _normalize_layout_label(line) in self.LAYOUT_LABELS
-
-    def _peel_layout_label(self, line: str) -> str:
-        """Strip a leading layout tag from real content."""
-        for label in sorted(self.LAYOUT_PREFIX_LABELS, key=len, reverse=True):
-            match = re.match(rf"^{re.escape(label)}\s+", line, re.I)
-            if match:
-                return line[match.end():]
-        return line
-
-    def _clean_lines(self, text: str) -> list[str]:
-        if not text:
-            return []
-        cleaned = re.split(
-            r"(?i)(?:\n\s*)?REFERENCES?\b.*", text, maxsplit=1
-        )[0]
-        out = []
-        for ln in cleaned.splitlines():
-            s = _normalize_glyphs(ln.strip())
-            if not s:
-                continue
-            # drop pure left-column labels
-            if self._is_layout_label(s):
-                continue
-            # peel a leading label on the same line:
-            # "College Bachelor of Science..." -> "Bachelor of Science..."
-            s = self._peel_layout_label(s).strip()
-            if s:
-                out.append(s)
-        return out
+    # Skills, rewrite, camel-case, and line-normalization helpers live in
+    # ResumeContentBuilder (app/export/content.py) so the PDF exporter applies
+    # exactly the same content rules.

@@ -127,33 +127,37 @@ export default function Dashboard({ navigate, addToast }: PageProps) {
     navigate("analysis")
   }
 
-  const exportResume = async (f: RecentFile) => {
-    addToast("info", `Generating DOCX for ${f.name}…`)
+  const exportResume = async (f: RecentFile, format: "docx" | "pdf" = "docx") => {
+    addToast("info", `Generating ${format.toUpperCase()} for ${f.name}…`)
     try {
-      const blob = await api.exportResume(f.id, f.analysis?.id)
+      const blob = await api.exportResume(f.id, f.analysis?.id, false, format)
       const link = document.createElement("a")
       link.href = URL.createObjectURL(blob)
-      link.download = `${f.name.replace(/\.[^.]+$/, "")}_ATS_Optimized.docx`
+      link.download = `${f.name.replace(/\.[^.]+$/, "")}_ATS_Optimized.${format}`
       link.click()
       URL.revokeObjectURL(link.href)
-      addToast("success", "ATS-optimized resume downloaded!")
+      addToast("success", `ATS-optimized ${format.toUpperCase()} downloaded!`)
     } catch (error) {
       addToast("error", error instanceof Error ? error.message : "Could not export resume")
     }
   }
 
-  // D3: download a stored tailored version
-  const exportVersion = async (f: RecentFile, v: api.ResumeVersionSummary) => {
-    addToast("info", `Generating ${v.label} DOCX…`)
+  // D3/D5: download a stored tailored version as DOCX or PDF
+  const exportVersion = async (
+    f: RecentFile,
+    v: api.ResumeVersionSummary,
+    format: "docx" | "pdf" = "docx",
+  ) => {
+    addToast("info", `Generating ${v.label} ${format.toUpperCase()}…`)
     try {
-      const blob = await api.exportVersion(f.id, v.id)
+      const blob = await api.exportVersion(f.id, v.id, false, format)
       const link = document.createElement("a")
       link.href = URL.createObjectURL(blob)
       const jobWord = v.label.replace(/^Tailored for\s*/, "").replace(/^Tailored$/, "tailored")
-      link.download = `${f.name.replace(/\.[^.]+$/, "")}_${jobWord.replace(/[^\w]+/g, "_")}.docx`
+      link.download = `${f.name.replace(/\.[^.]+$/, "")}_${jobWord.replace(/[^\w]+/g, "_")}.${format}`
       link.click()
       URL.revokeObjectURL(link.href)
-      addToast("success", `${v.label} resume downloaded!`)
+      addToast("success", `${v.label} ${format.toUpperCase()} downloaded!`)
     } catch (error) {
       addToast("error", error instanceof Error ? error.message : "Could not export version")
     }
@@ -248,15 +252,26 @@ export default function Dashboard({ navigate, addToast }: PageProps) {
                             {f.versions.length > 0 && (
                               <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
                                 {f.versions.map(v => (
-                                  <button
+                                  <span
                                     key={v.id}
-                                    onClick={() => exportVersion(f, v)}
-                                    className="inline-flex items-center gap-1 text-[10px] text-teal bg-teal/10 hover:bg-teal/20 rounded-full px-2 py-0.5 transition-colors"
-                                    title={`${v.label} — ${v.applied_rewrites_count} rewrites applied. Click to export.`}
+                                    className="inline-flex items-center rounded-full bg-teal/10 overflow-hidden"
                                   >
-                                    <Download size={9} />
-                                    {v.label} · {v.applied_rewrites_count} rewrites
-                                  </button>
+                                    <button
+                                      onClick={() => exportVersion(f, v, "docx")}
+                                      className="inline-flex items-center gap-1 text-[10px] text-teal hover:bg-teal/20 px-2 py-0.5 transition-colors"
+                                      title={`${v.label} — ${v.applied_rewrites_count} rewrites applied. Click to export DOCX.`}
+                                    >
+                                      <Download size={9} />
+                                      {v.label} · {v.applied_rewrites_count} rewrites
+                                    </button>
+                                    <button
+                                      onClick={() => exportVersion(f, v, "pdf")}
+                                      className="text-[9px] font-semibold text-teal hover:bg-teal/20 px-1.5 py-0.5 border-l border-teal/20 transition-colors"
+                                      title={`Download ${v.label} as PDF`}
+                                    >
+                                      PDF
+                                    </button>
+                                  </span>
                                 ))}
                               </div>
                             )}
@@ -289,7 +304,14 @@ export default function Dashboard({ navigate, addToast }: PageProps) {
                             <RefreshCw size={13} />
                           </button>
                           <button
-                            onClick={() => exportResume(f)}
+                            onClick={() => exportResume(f, "pdf")}
+                            className="p-1.5 rounded-lg hover:bg-teal/10 text-mid hover:text-teal transition-colors"
+                            title="Export tailored PDF"
+                          >
+                            <FileText size={13} />
+                          </button>
+                          <button
+                            onClick={() => exportResume(f, "docx")}
                             className="p-1.5 rounded-lg hover:bg-teal/10 text-mid hover:text-teal transition-colors"
                             title="Export tailored DOCX"
                           >

@@ -10,6 +10,22 @@ from app.resume.service import ResumeService
 
 router = APIRouter()
 
+# D5: the export endpoints serve DOCX by default and PDF on request. Both use
+# the same tailored content; only the renderer changes.
+_EXPORT_MEDIA_TYPES = {
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "pdf": "application/pdf",
+}
+
+
+def _export_format(value: str) -> str:
+    normalized = (value or "docx").strip().lower()
+    if normalized not in _EXPORT_MEDIA_TYPES:
+        raise HTTPException(
+            status_code=400, detail="format must be 'docx' or 'pdf'"
+        )
+    return normalized
+
 @router.get("/")
 def list_resumes(
     user: User = Depends(get_current_user),
@@ -80,6 +96,17 @@ def get_analysis(
     service = ResumeService(session)
     return service.get_analysis(resume_id, analysis_id, user.id)
 
+@router.get("/{resume_id}/analyses/{analysis_id}/comparison")
+def compare_analysis(
+    resume_id: UUID,
+    analysis_id: UUID,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """D6: original vs. tailored content, including only accepted rewrites."""
+    service = ResumeService(session)
+    return service.get_comparison(resume_id, analysis_id, user.id)
+
 @router.get("/{resume_id}/export")
 def export_resume(
     resume_id: UUID,
@@ -87,15 +114,29 @@ def export_resume(
     # A4: opt-in only — the export keeps the resume's own title unless the
     # user explicitly asks to match the attached job's title.
     match_title: bool = False,
+    # D5: docx (default) or pdf; both use the same tailored content.
+    format: str = "docx",
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
+    output_format = _export_format(format)
     service = ResumeService(session)
-    data = service.export_docx(resume_id, user.id, analysis_id, match_title=match_title)
+    if output_format == "pdf":
+        data = service.export_pdf(
+            resume_id, user.id, analysis_id, match_title=match_title
+        )
+    else:
+        data = service.export_docx(
+            resume_id, user.id, analysis_id, match_title=match_title
+        )
     return Response(
         content=data,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f"attachment; filename=ATS_Optimized_Resume.docx"}
+        media_type=_EXPORT_MEDIA_TYPES[output_format],
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename=ATS_Optimized_Resume.{output_format}"
+            )
+        }
     )
 
 @router.post("/{resume_id}/analyses/{analysis_id}/confirm-keywords")
@@ -183,16 +224,24 @@ def export_version(
     version_id: UUID,
     # A4: same opt-in rule as the direct export endpoint.
     match_title: bool = False,
+    # D5: docx (default) or pdf.
+    format: str = "docx",
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
+    output_format = _export_format(format)
     service = ResumeService(session)
-    data, filename = service.export_version_docx(
-        resume_id, version_id, user.id, match_title=match_title
-    )
+    if output_format == "pdf":
+        data, filename = service.export_version_pdf(
+            resume_id, version_id, user.id, match_title=match_title
+        )
+    else:
+        data, filename = service.export_version_docx(
+            resume_id, version_id, user.id, match_title=match_title
+        )
     return Response(
         content=data,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        media_type=_EXPORT_MEDIA_TYPES[output_format],
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 

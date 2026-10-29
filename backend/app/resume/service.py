@@ -18,6 +18,8 @@ from app.analyzer.grammar_checker import GrammarChecker
 from app.analyzer.ai_rewriter import AIRewriter
 from app.analyzer.scoring import compute_overall
 from app.export.docx_exporter import DocxExporter
+from app.export.pdf_exporter import PdfExporter
+from app.export.content import ResumeContentBuilder
 from app.common.exceptions import AnalysisNotFoundError, JobNotFoundError, ResumeNotFoundError, VersionNotFoundError
 from app.common.skills import is_soft_skill
 
@@ -52,6 +54,8 @@ def _shared_components() -> dict:
         "grammar": GrammarChecker(),
         "ai": AIRewriter(),
         "exporter": DocxExporter(),
+        "pdf_exporter": PdfExporter(),
+        "content": ResumeContentBuilder(),
     }
 
 
@@ -76,6 +80,8 @@ class ResumeService:
         self.grammar = components["grammar"]
         self.ai = components["ai"]
         self.exporter = components["exporter"]
+        self.pdf_exporter = components["pdf_exporter"]
+        self.content = components["content"]
 
     def upload(self, file: UploadFile, user_id: UUID) -> Resume:
         if not file.filename:
@@ -352,13 +358,192 @@ class ResumeService:
             raise AnalysisNotFoundError()
         return analysis
 
-    def export_docx(
+    # ------------------------------------------------------------------ #
+    # D6: original vs. tailored comparison
+    # ------------------------------------------------------------------ #
+
+    def get_comparison(
+        self, resume_id: UUID, analysis_id: UUID, user_id: UUID
+    ) -> dict:
+        """Return the original resume and the exact tailored content an export
+        would produce, plus the accepted rewrites that changed it.
+
+        The tailored view is built from ``_tailored_sections`` and the same
+        confirmed-keyword rules the exporters use, so nothing shown here is a
+        promise the download won't keep.
+        """
+        resume = self.session.get(Resume, resume_id)
+        if not resume or resume.user_id != user_id:
+            raise ResumeNotFoundError()
+        analysis = self.session.get(ResumeAnalysis, analysis_id)
+        if not analysis or analysis.resume_id != resume_id:
+            raise AnalysisNotFoundError()
+
+        report = analysis.report or {}
+        sections = resume.parsed_data.get("sections", {}) or {}
+        accepted = self._decided_rewrites(report)
+        confirmed = report.get("confirmed_keywords", []) or []
+        tailored_sections = self._tailored_sections(sections, accepted)
+
+        job_title = None
+        if analysis.job_id:
+            job = self.session.get(JobDescription, analysis.job_id)
+            if job:
+                job_title = job.title
+
+        return {
+            "resume_id": str(resume_id),
+            "analysis_id": str(analysis_id),
+            "job_title": job_title,
+            "original": self._comparison_view(sections, [], None),
+            "tailored": self._comparison_view(
+                tailored_sections, confirmed, accepted
+            ),
+            "changes": [
+                {"original": original, "tailored": replacement}
+                for original, replacement in accepted.items()
+                if self._rewrite_is_in_sections(original, sections)
+            ],
+            "confirmed_keywords": self._exported_confirmed_keywords(
+                sections, confirmed
+            ),
+        }
+
+    def _comparison_view(
+        self,
+        sections: dict,
+        keywords: list[str],
+        rewritten: dict[str, str] | None,
+    ) -> dict:
+        """Flatten one version of the resume into heading + display lines.
+
+        Parsed bullets stay 1:1 (unlike the exporters, which merge accidental
+        continuations) so a changed bullet is easy to spot side by side.
+        """
+        content = self.content
+        contact = sections.get("contact_parsed", {}) or {}
+        view = {
+            "header": {
+                "name": (contact.get("name") or "").strip(),
+                "title": content.resume_title(sections),
+                "contact": [
+                    text for _, text in content.contact_parts(contact)
+                ],
+            },
+            "sections": [],
+        }
+
+        def add(key: str, heading: str, lines: list[str]):
+            cleaned = [line for line in lines if (line or "").strip()]
+            if cleaned:
+                view["sections"].append(
+                    {"key": key, "heading": heading, "lines": cleaned}
+                )
+
+        summary_raw = (sections.get("summary") or {}).get("raw")
+        if summary_raw:
+            text = content.summary_text(summary_raw)
+            if text:
+                add("summary", "SUMMARY", [text])
+
+        education_parsed = sections.get("education_parsed")
+        education_raw = (sections.get("education") or {}).get("raw")
+        education_lines: list[str] = []
+        if education_parsed:
+            for entry in education_parsed:
+                parts = content.education_parts(entry)
+                if not parts["primary"]:
+                    continue
+                line = parts["primary"]
+                if parts["dates"]:
+                    line += f"  |  {parts['dates']}"
+                education_lines.append(line)
+                if parts["secondary"]:
+                    education_lines.append(parts["secondary"])
+                education_lines.extend(parts["details"])
+        elif education_raw:
+            education_lines = content._clean_lines(education_raw)
+        add("education", "EDUCATION", education_lines)
+
+        skills_raw = (sections.get("skills") or {}).get("raw")
+        if skills_raw:
+            skill_lines, leftover = content.skills_lines(skills_raw, keywords)
+            if leftover:
+                skill_lines.append("Additional Skills: " + ", ".join(leftover))
+            add("skills", "TECHNICAL SKILLS", skill_lines)
+
+        for key, parsed_key, heading in (
+            ("experience", "experience_parsed", "EXPERIENCE"),
+            ("projects", "projects_parsed", "PROJECTS"),
+        ):
+            parsed = sections.get(parsed_key)
+            raw = (sections.get(key) or {}).get("raw")
+            lines: list[str] = []
+            if parsed:
+                for entry in parsed:
+                    parts = content.entry_parts(entry)
+                    header = parts["title"]
+                    if parts["subtitle"]:
+                        header += f" — {parts['subtitle']}"
+                    if parts["dates"]:
+                        header += f"  |  {parts['dates']}"
+                    if header:
+                        lines.append(header)
+                    for text in content.entry_bullet_texts(
+                        entry.get("bullets") or [], rewritten
+                    ):
+                        lines.append(f"• {text}")
+            elif raw:
+                lines = content._clean_lines(raw)
+            add(key, heading, lines)
+
+        for key, heading in (
+            ("certifications", "CERTIFICATIONS"),
+            ("languages", "LANGUAGES"),
+        ):
+            raw = (sections.get(key) or {}).get("raw")
+            if raw:
+                add(key, heading, content._clean_lines(raw))
+
+        return view
+
+    @staticmethod
+    def _rewrite_is_in_sections(original: str, sections: dict) -> bool:
+        """True when an accepted rewrite points at a bullet this resume has."""
+        for key in ("experience_parsed", "projects_parsed"):
+            for entry in sections.get(key) or []:
+                if original in (entry.get("bullets") or []):
+                    return True
+        for key in ("experience", "projects"):
+            raw = (sections.get(key) or {}).get("raw") or ""
+            if original in raw:
+                return True
+        return False
+
+    def _exported_confirmed_keywords(
+        self, sections: dict, confirmed: list[str]
+    ) -> list[str]:
+        """The confirmed keywords that will actually appear in the export."""
+        if not confirmed:
+            return []
+        skills_raw = (sections.get("skills") or {}).get("raw") or ""
+        if not skills_raw:
+            # The exporters only add confirmed skills to an existing Skills
+            # section; without one there is nothing to fold them into.
+            return []
+        return self.content._filter_keywords(skills_raw, confirmed)
+
+    def _export_payload(
         self,
         resume_id: UUID,
         user_id: UUID,
         analysis_id: UUID | None = None,
-        match_title: bool = False,
-    ) -> bytes:
+    ) -> tuple[dict, list[str], dict[str, str], str]:
+        """Load everything an export needs: sections, confirmed skills, the
+        accepted rewrites, and the job title (used only with ``match_title``).
+
+        DOCX and PDF share this so the two files always say the same thing.
+        """
         resume = self.session.get(Resume, resume_id)
         if not resume or resume.user_id != user_id:
             raise ResumeNotFoundError()
@@ -371,11 +556,15 @@ class ResumeService:
             if not analysis or analysis.resume_id != resume_id:
                 raise AnalysisNotFoundError()
         else:
-            statement = select(ResumeAnalysis).where(ResumeAnalysis.resume_id == resume_id).order_by(ResumeAnalysis.created_at.desc())
+            statement = (
+                select(ResumeAnalysis)
+                .where(ResumeAnalysis.resume_id == resume_id)
+                .order_by(ResumeAnalysis.created_at.desc())
+            )
             analysis = self.session.exec(statement).first()
 
-        confirmed_keywords = []
-        rewritten_bullets = {}
+        confirmed_keywords: list[str] = []
+        rewritten_bullets: dict[str, str] = {}
         target_role = ""
 
         if analysis and analysis.report:
@@ -395,10 +584,46 @@ class ResumeService:
                 if job:
                     target_role = job.title
 
+        return (
+            resume.parsed_data.get("sections", {}) or {},
+            confirmed_keywords,
+            rewritten_bullets,
+            target_role,
+        )
+
+    def export_docx(
+        self,
+        resume_id: UUID,
+        user_id: UUID,
+        analysis_id: UUID | None = None,
+        match_title: bool = False,
+    ) -> bytes:
+        sections, keywords, rewrites, target_role = self._export_payload(
+            resume_id, user_id, analysis_id
+        )
         return self.exporter.export_tailored(
-            sections=resume.parsed_data.get("sections", {}),
-            missing_keywords=confirmed_keywords,
-            rewritten_bullets=rewritten_bullets,
+            sections=sections,
+            missing_keywords=keywords,
+            rewritten_bullets=rewrites,
+            target_role=target_role,
+            match_title=match_title,
+        )
+
+    def export_pdf(
+        self,
+        resume_id: UUID,
+        user_id: UUID,
+        analysis_id: UUID | None = None,
+        match_title: bool = False,
+    ) -> bytes:
+        """D5: same content as the DOCX export, rendered as a text PDF."""
+        sections, keywords, rewrites, target_role = self._export_payload(
+            resume_id, user_id, analysis_id
+        )
+        return self.pdf_exporter.export_tailored(
+            sections=sections,
+            missing_keywords=keywords,
+            rewritten_bullets=rewrites,
             target_role=target_role,
             match_title=match_title,
         )
@@ -738,15 +963,13 @@ class ResumeService:
         self.session.delete(version)
         self.session.commit()
 
-    def export_version_docx(
+    def _version_export_payload(
         self,
         resume_id: UUID,
         version_id: UUID,
         user_id: UUID,
-        match_title: bool = False,
-    ) -> tuple[bytes, str]:
-        """Export the stored tailored version. Bullets are already rewritten in
-        the stored sections, so no rewrite map is passed to the exporter."""
+    ) -> tuple[dict, list[str], str]:
+        """Load the stored tailored sections and export metadata for a version."""
         resume = self.session.get(Resume, resume_id)
         if not resume or resume.user_id != user_id:
             raise ResumeNotFoundError()
@@ -765,13 +988,16 @@ class ResumeService:
             if job:
                 target_role = job.title
 
-        data = self.exporter.export_tailored(
-            sections=version.parsed_data.get("sections", {}),
-            missing_keywords=confirmed_keywords,
-            rewritten_bullets={},
-            target_role=target_role,
-            match_title=match_title,
+        return (
+            version.parsed_data.get("sections", {}) or {},
+            confirmed_keywords,
+            target_role,
         )
+
+    @staticmethod
+    def _version_filename(
+        target_role: str, match_title: bool, extension: str
+    ) -> str:
         # A4: name the file after the job only when the export actually used
         # the job's title; otherwise the filename would imply a match that
         # isn't in the document.
@@ -780,5 +1006,47 @@ class ResumeService:
             if match_title and target_role
             else ""
         )
-        filename = f"Resume_Tailored_{safe}.docx" if safe else "ATS_Optimized_Resume.docx"
-        return data, filename
+        if safe:
+            return f"Resume_Tailored_{safe}.{extension}"
+        return f"ATS_Optimized_Resume.{extension}"
+
+    def export_version_docx(
+        self,
+        resume_id: UUID,
+        version_id: UUID,
+        user_id: UUID,
+        match_title: bool = False,
+    ) -> tuple[bytes, str]:
+        """Export the stored tailored version. Bullets are already rewritten in
+        the stored sections, so no rewrite map is passed to the exporter."""
+        sections, confirmed_keywords, target_role = self._version_export_payload(
+            resume_id, version_id, user_id
+        )
+        data = self.exporter.export_tailored(
+            sections=sections,
+            missing_keywords=confirmed_keywords,
+            rewritten_bullets={},
+            target_role=target_role,
+            match_title=match_title,
+        )
+        return data, self._version_filename(target_role, match_title, "docx")
+
+    def export_version_pdf(
+        self,
+        resume_id: UUID,
+        version_id: UUID,
+        user_id: UUID,
+        match_title: bool = False,
+    ) -> tuple[bytes, str]:
+        """D5: the same stored version rendered as a text PDF."""
+        sections, confirmed_keywords, target_role = self._version_export_payload(
+            resume_id, version_id, user_id
+        )
+        data = self.pdf_exporter.export_tailored(
+            sections=sections,
+            missing_keywords=confirmed_keywords,
+            rewritten_bullets={},
+            target_role=target_role,
+            match_title=match_title,
+        )
+        return data, self._version_filename(target_role, match_title, "pdf")

@@ -224,7 +224,9 @@ export async function exportResume(
   analysisId?: string,
   // A4: opt-in only. By default the export keeps the resume's own title; set
   // this to true only when the user explicitly asks to match the job's title.
-  matchTitle = false
+  matchTitle = false,
+  // D5: both formats use the same tailored content.
+  format: "docx" | "pdf" = "docx"
 ): Promise<Blob> {
   const headers = new Headers()
   const token = getToken()
@@ -233,6 +235,7 @@ export async function exportResume(
   const params = new URLSearchParams()
   if (analysisId) params.set("analysis_id", analysisId)
   if (matchTitle) params.set("match_title", "true")
+  params.set("format", format)
   const query = params.toString() ? `?${params.toString()}` : ""
   const response = await fetch(`${API_BASE_URL}/resumes/${resumeId}/export${query}`, { headers })
   if (!response.ok) throw new Error("Could not export resume")
@@ -286,13 +289,17 @@ export async function exportVersion(
   resumeId: string,
   versionId: string,
   // A4: same opt-in rule as exportResume.
-  matchTitle = false
+  matchTitle = false,
+  // D5: both formats use the same stored tailored content.
+  format: "docx" | "pdf" = "docx"
 ): Promise<Blob> {
   const headers = new Headers()
   const token = getToken()
   if (token) headers.set("Authorization", `Bearer ${token}`)
-  const query = matchTitle ? "?match_title=true" : ""
-  const response = await fetch(`${API_BASE_URL}/resumes/${resumeId}/versions/${versionId}/export${query}`, { headers })
+  const params = new URLSearchParams()
+  if (matchTitle) params.set("match_title", "true")
+  params.set("format", format)
+  const response = await fetch(`${API_BASE_URL}/resumes/${resumeId}/versions/${versionId}/export?${params.toString()}`, { headers })
   if (!response.ok) throw new Error("Could not export version")
   return response.blob()
 }
@@ -301,6 +308,43 @@ export async function exportVersion(
 // so a refresh keeps the same analysis instead of trusting a serialized copy.
 export async function getAnalysis(resumeId: string, analysisId: string): Promise<ResumeAnalysis> {
   return request<ResumeAnalysis>(`/resumes/${resumeId}/analyses/${analysisId}`)
+}
+
+// D6: original vs. tailored content, flattened into heading + display lines.
+export interface ComparisonHeader {
+  name: string
+  title: string
+  contact: string[]
+}
+
+export interface ComparisonSection {
+  key: string
+  heading: string
+  lines: string[]
+}
+
+export interface ComparisonView {
+  header: ComparisonHeader
+  sections: ComparisonSection[]
+}
+
+export interface ComparisonChange {
+  original: string
+  tailored: string
+}
+
+export interface ResumeComparison {
+  resume_id: string
+  analysis_id: string
+  job_title: string | null
+  original: ComparisonView
+  tailored: ComparisonView
+  changes: ComparisonChange[]
+  confirmed_keywords: string[]
+}
+
+export async function getComparison(resumeId: string, analysisId: string): Promise<ResumeComparison> {
+  return request<ResumeComparison>(`/resumes/${resumeId}/analyses/${analysisId}/comparison`)
 }
 
 export function saveLastAnalysisId(id: string): void {

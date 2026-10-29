@@ -1008,5 +1008,286 @@ class ConfirmKeywordsPersistenceTests(unittest.TestCase):
             self.assertEqual(kwargs["missing_keywords"], ["SQL", "Linux"])
 
 
+class PdfExportServiceTests(unittest.TestCase):
+    """D5: the service wires the PDF exporter with the same tailored inputs."""
+
+    def setUp(self):
+        self.service = ResumeService(MagicMock())
+        self.pdf = MagicMock()
+        self.pdf.export_tailored.return_value = b"%PDF-1.4"
+        self.service.pdf_exporter = self.pdf
+
+    def test_export_pdf_uses_accepted_rewrites_and_confirmed_keywords(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        analysis = make_analysis(resume.id, report={
+            "ai_rewritten_examples": {"b": {"ai_output": "ACCEPTED"}},
+            "rewrite_decisions": {
+                "b": {"action": "accepted", "text": "ACCEPTED"},
+            },
+            "confirmed_keywords": ["Docker"],
+        })
+
+        def fake_get(model, _id):
+            if model is Resume:
+                return resume
+            if model is ResumeAnalysis:
+                return analysis
+            return None
+
+        self.service.session.get.side_effect = fake_get
+
+        data = self.service.export_pdf(resume.id, owner_id, analysis.id)
+
+        self.assertEqual(data, b"%PDF-1.4")
+        kwargs = self.pdf.export_tailored.call_args.kwargs
+        self.assertEqual(kwargs["rewritten_bullets"], {"b": "ACCEPTED"})
+        self.assertEqual(kwargs["missing_keywords"], ["Docker"])
+
+    def test_export_version_pdf_uses_stored_sections_and_pdf_filename(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        job = JobDescription(id=uuid4(), user_id=owner_id, title="Backend Dev", raw_text="jd")
+        analysis = make_analysis(resume.id, report={
+            "keyword_analysis": {"missing_keywords": ["Docker", "Kubernetes"]},
+            "confirmed_keywords": ["Docker"],
+        })
+        version = ResumeVersion(
+            id=uuid4(), resume_id=resume.id, job_id=job.id, analysis_id=analysis.id,
+            label="Tailored for Backend Dev", raw_text="tailored",
+            parsed_data={"sections": {"experience_parsed": [{"bullets": ["Led 5-member team"]}]}},
+            applied_rewrites={"Did tasks for the team": "Led 5-member team"},
+        )
+
+        def fake_get(model, _id):
+            if model is Resume:
+                return resume
+            if model is ResumeAnalysis:
+                return analysis
+            if model is JobDescription:
+                return job
+            if model is ResumeVersion:
+                return version
+            return None
+
+        self.service.session.get.side_effect = fake_get
+
+        data, filename = self.service.export_version_pdf(
+            resume.id, version.id, owner_id
+        )
+
+        self.assertEqual(data, b"%PDF-1.4")
+        self.assertEqual(filename, "ATS_Optimized_Resume.pdf")
+        kwargs = self.pdf.export_tailored.call_args.kwargs
+        self.assertEqual(kwargs["sections"], version.parsed_data["sections"])
+        self.assertEqual(kwargs["rewritten_bullets"], {})
+        self.assertEqual(kwargs["missing_keywords"], ["Docker"])
+
+    def test_export_version_pdf_filename_uses_job_title_when_matched(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        job = JobDescription(id=uuid4(), user_id=owner_id, title="Backend Dev", raw_text="jd")
+        analysis = make_analysis(resume.id, report={})
+        version = ResumeVersion(
+            id=uuid4(), resume_id=resume.id, job_id=job.id, analysis_id=analysis.id,
+            label="Tailored for Backend Dev", raw_text="tailored",
+            parsed_data={"sections": {}}, applied_rewrites={},
+        )
+
+        def fake_get(model, _id):
+            if model is Resume:
+                return resume
+            if model is ResumeAnalysis:
+                return analysis
+            if model is JobDescription:
+                return job
+            if model is ResumeVersion:
+                return version
+            return None
+
+        self.service.session.get.side_effect = fake_get
+
+        _, filename = self.service.export_version_pdf(
+            resume.id, version.id, owner_id, match_title=True
+        )
+        self.assertEqual(filename, "Resume_Tailored_Backend_Dev.pdf")
+
+    def test_export_pdf_rejects_a_foreign_resume(self):
+        with self.assertRaises(ResumeNotFoundError):
+            self.service.export_pdf(uuid4(), uuid4())
+
+
+class ComparisonTests(unittest.TestCase):
+    """D6: side-by-side view shows exactly what the export will contain."""
+
+    def setUp(self):
+        self.service = ResumeService(MagicMock())
+        self.owner_id = uuid4()
+        self.resume = make_resume(self.owner_id)
+        self.resume.parsed_data = {"sections": {
+            "contact_parsed": {
+                "name": "Jane Doe",
+                "title": "Backend Developer",
+                "email": "jane@example.com",
+            },
+            "summary": {"raw": "Backend developer who ships reliable APIs."},
+            "skills": {"raw": "Languages: Python\nDatabases: MySQL"},
+            "experience_parsed": [{
+                "title": "Backend Developer",
+                "company": "Northwind Labs",
+                "dates": "2024 - 2025",
+                "bullets": ["Did tasks for the team", "Built APIs"],
+            }],
+        }, "metadata": {}}
+
+    def _wire(self, analysis):
+        def fake_get(model, _id):
+            if model is Resume:
+                return self.resume
+            if model is ResumeAnalysis:
+                return analysis
+            return None
+
+        self.service.session.get.side_effect = fake_get
+        return analysis
+
+    def _analysis(self, report=None) -> ResumeAnalysis:
+        return self._wire(make_analysis(self.resume.id, report=report or {}))
+
+    @staticmethod
+    def _section(view: dict, key: str) -> dict:
+        return next(section for section in view["sections"] if section["key"] == key)
+
+    def test_tailored_view_uses_only_accepted_rewrites_and_confirmed_skills(self):
+        analysis = self._analysis({
+            "ai_rewritten_examples": {
+                "Did tasks for the team": {"ai_output": "Led a 5-member team"},
+                "Built APIs": {"ai_output": "Engineered APIs"},
+            },
+            "rewrite_decisions": {
+                "Did tasks for the team": {"action": "accepted", "text": "Led a 5-member team"},
+                "Built APIs": {"action": "rejected", "text": ""},
+            },
+            "confirmed_keywords": ["SQL", "Communication"],
+        })
+
+        result = self.service.get_comparison(
+            self.resume.id, analysis.id, self.owner_id
+        )
+
+        original_exp = self._section(result["original"], "experience")["lines"]
+        tailored_exp = self._section(result["tailored"], "experience")["lines"]
+        self.assertIn("• Did tasks for the team", original_exp)
+        self.assertIn("• Built APIs", original_exp)
+        self.assertNotIn("• Led a 5-member team", original_exp)
+
+        self.assertIn("• Led a 5-member team", tailored_exp)
+        self.assertIn("• Built APIs", tailored_exp)
+        self.assertNotIn("• Did tasks for the team", tailored_exp)
+        self.assertNotIn("• Engineered APIs", tailored_exp)
+
+        self.assertEqual(result["changes"], [{
+            "original": "Did tasks for the team",
+            "tailored": "Led a 5-member team",
+        }])
+
+        original_skills = self._section(result["original"], "skills")["lines"]
+        tailored_skills = self._section(result["tailored"], "skills")["lines"]
+        self.assertNotIn("Databases: MySQL, SQL", "\n".join(original_skills))
+        self.assertIn("Databases: MySQL, SQL", tailored_skills)
+        # Soft skills are never exported, so they are not reported as added.
+        self.assertEqual(result["confirmed_keywords"], ["SQL"])
+        self.assertEqual(result["tailored"]["header"]["title"], "Backend Developer")
+
+    def test_unreviewed_analysis_shows_no_changes(self):
+        analysis = self._analysis({
+            "ai_rewritten_examples": {
+                "Did tasks for the team": {"ai_output": "Led a 5-member team"},
+            },
+        })
+
+        result = self.service.get_comparison(
+            self.resume.id, analysis.id, self.owner_id
+        )
+
+        self.assertEqual(result["changes"], [])
+        self.assertEqual(
+            result["original"]["sections"], result["tailored"]["sections"]
+        )
+
+    def test_raw_experience_fallback_is_compared_too(self):
+        self.resume.parsed_data = {"sections": {
+            "contact_parsed": {"name": "Jane Doe"},
+            "experience": {"raw": "Did tasks for the team"},
+        }, "metadata": {}}
+        analysis = self._analysis({
+            "ai_rewritten_examples": {
+                "Did tasks for the team": {"ai_output": "Led a 5-member team"},
+            },
+            "rewrite_decisions": {
+                "Did tasks for the team": {"action": "accepted", "text": "Led a 5-member team"},
+            },
+        })
+
+        result = self.service.get_comparison(
+            self.resume.id, analysis.id, self.owner_id
+        )
+
+        self.assertEqual(
+            self._section(result["original"], "experience")["lines"],
+            ["Did tasks for the team"],
+        )
+        self.assertEqual(
+            self._section(result["tailored"], "experience")["lines"],
+            ["Led a 5-member team"],
+        )
+        self.assertEqual(len(result["changes"]), 1)
+
+    def test_confirmed_keywords_without_a_skills_section_are_not_exported(self):
+        self.resume.parsed_data = {"sections": {
+            "contact_parsed": {"name": "Jane Doe"},
+        }, "metadata": {}}
+        analysis = self._analysis({"confirmed_keywords": ["Docker"]})
+
+        result = self.service.get_comparison(
+            self.resume.id, analysis.id, self.owner_id
+        )
+
+        self.assertEqual(result["confirmed_keywords"], [])
+        self.assertFalse(
+            any(s["key"] == "skills" for s in result["tailored"]["sections"])
+        )
+
+    def test_accepted_rewrite_that_is_not_in_the_resume_is_not_a_change(self):
+        analysis = self._analysis({
+            "ai_rewritten_examples": {
+                "Not in this resume": {"ai_output": "Something else"},
+            },
+            "rewrite_decisions": {
+                "Not in this resume": {"action": "accepted", "text": "Something else"},
+            },
+        })
+
+        result = self.service.get_comparison(
+            self.resume.id, analysis.id, self.owner_id
+        )
+        self.assertEqual(result["changes"], [])
+
+    def test_another_users_resume_is_rejected(self):
+        analysis = self._analysis()
+        with self.assertRaises(ResumeNotFoundError):
+            self.service.get_comparison(
+                self.resume.id, analysis.id, uuid4()
+            )
+
+    def test_analysis_from_another_resume_is_rejected(self):
+        analysis = self._analysis()
+        analysis.resume_id = uuid4()
+        with self.assertRaises(AnalysisNotFoundError):
+            self.service.get_comparison(
+                self.resume.id, analysis.id, self.owner_id
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

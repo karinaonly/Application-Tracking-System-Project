@@ -24,9 +24,9 @@ plus AI rewrites that are stored, auditable, and never invent experience you don
   bullet population.
 - **Per-job tailored resume versions** — one stored version per (resume, job): rewrites
   applied into the real text, re-saved (upserted) after better analyses, exportable as
-  DOCX with a job-specific filename.
-- **DOCX export** — tailored bullets, keyword suggestions, ATS-safe formatting, glyph
-  normalization (no tofu boxes).
+  DOCX or PDF with a job-specific filename.
+- **DOCX & PDF export** — tailored bullets, keyword suggestions, ATS-safe single-column
+  formatting, glyph normalization (no tofu boxes).
 - **Job descriptions** — paste manually or import from a URL (SSRF-guarded fetch;
   sites that block bots fail loudly with a "paste manually" message instead of saving
   junk). A deterministic parser extracts required/preferred skills, tools, seniority,
@@ -40,6 +40,7 @@ plus AI rewrites that are stored, auditable, and never invent experience you don
 | Backend  | Python 3.10+, FastAPI, SQLModel, SQLite                     |
 | AI       | Groq (default) via the OpenAI-compatible client; OpenAI/Gemini optional |
 | Parsing  | pdfplumber, PyMuPDF, python-docx, spaCy (optional)          |
+| Export   | python-docx (DOCX), ReportLab (PDF)                         |
 | Frontend | React 19, Vite, Tailwind CSS v4, TypeScript, bun            |
 
 ## Project layout
@@ -51,11 +52,11 @@ backend/
     resume/        # models, service (analyze / versions / export), router
     jobs/          # job descriptions, scraper (SSRF guard), JD parser
     analyzer/      # ATS checker, bullet analyzer, keyword engine, AI rewriter, claim guard
-    export/        # DOCX exporter
+    export/        # DOCX + PDF exporters (shared content rules)
     parser/        # text extraction + section parsing
     common/        # shared skills taxonomy, exceptions
     config/        # settings, database
-  tests/           # 168 unittest tests
+  tests/           # 334 unittest tests
 frontend/
   src/
     pages/         # Landing, Auth, Dashboard, Upload, Analysis, JobDescriptions, Settings
@@ -129,9 +130,9 @@ bun run build
 3. **Analyze** the resume against that job → scores, flagged bullets, AI rewrites with
    provenance, and a projected after-tailoring score.
 4. **Save as version** → the tailored text is stored per job; export it from the
-   Dashboard as a DOCX whenever you need it.
+   Dashboard as a DOCX or PDF whenever you need it.
 
 ## Status
 
-See `ROADMAP.md` for the full prioritized backlog (46/77 done at last count) with a
+See `ROADMAP.md` for the full prioritized backlog (70/77 done at last count) with a
 change log of every batch, what the tests caught, and what remains.

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Download, RefreshCw, ChevronDown, ChevronUp, Copy, CheckCircle, Check, XCircle, AlertTriangle, Lightbulb, BarChart2, Target, Edit3, Zap, BookOpen, ArrowLeftRight, Shield, Save, Info } from "lucide-react"
+import { Download, RefreshCw, ChevronDown, ChevronUp, Copy, CheckCircle, Check, XCircle, AlertTriangle, Lightbulb, BarChart2, Target, Edit3, Zap, BookOpen, ArrowLeftRight, Shield, Save, Info, X, FileText } from "lucide-react"
 import type { PageProps } from "../types"
 import * as api from "../api"
 
@@ -297,7 +297,13 @@ function RewriteCard({
 /* ─── Page ───────────────────────────────────────────────── */
 export default function Analysis({ navigate, addToast }: PageProps) {
   const [passedOpen, setPassedOpen] = useState(false)
-  const [exportLoading, setExportLoading] = useState(false)
+  // D5: DOCX and PDF share one loading flag, but only the clicked button spins.
+  const [exportingFormat, setExportingFormat] = useState<"docx" | "pdf" | null>(null)
+  // D6: side-by-side view of the original resume and what the export will say.
+  const [comparisonOpen, setComparisonOpen] = useState(false)
+  const [comparison, setComparison] = useState<api.ResumeComparison | null>(null)
+  const [comparisonLoading, setComparisonLoading] = useState(false)
+  const [comparisonError, setComparisonError] = useState<string | null>(null)
   // A4: the export keeps the resume's own title by default; matching the
   // job posting's title is an explicit, per-export choice.
   const [matchTitle, setMatchTitle] = useState(false)
@@ -338,21 +344,43 @@ export default function Analysis({ navigate, addToast }: PageProps) {
     return () => { cancelled = true }
   }, [addToast])
 
-  const handleExport = async () => {
+  const handleExport = async (format: "docx" | "pdf" = "docx") => {
     if (!resumeId) { addToast("error", "No resume selected for export"); return }
-    setExportLoading(true)
-    addToast("info", "Generating ATS-optimized DOCX…")
+    setExportingFormat(format)
+    addToast("info", `Generating ATS-optimized ${format.toUpperCase()}…`)
     try {
       // A18: pin the export to the analysis being viewed on this page.
-      const blob = await api.exportResume(resumeId, analysis?.id, matchTitle)
+      const blob = await api.exportResume(resumeId, analysis?.id, matchTitle, format)
       const link = document.createElement("a")
       link.href = URL.createObjectURL(blob)
-      link.download = "ATS_Optimized_Resume.docx"
+      link.download = `ATS_Optimized_Resume.${format}`
       link.click()
       URL.revokeObjectURL(link.href)
-      addToast("success", "ATS-optimized resume downloaded!")
+      addToast("success", `ATS-optimized ${format.toUpperCase()} downloaded!`)
     } catch (error) { addToast("error", error instanceof Error ? error.message : "Could not export resume") }
-    finally { setExportLoading(false) }
+    finally { setExportingFormat(null) }
+  }
+
+  // D6: open the comparison against the export's actual content. Fetched on
+  // every open so it reflects the latest accept/reject decisions.
+  const openComparison = async () => {
+    if (!resumeId || !analysis?.id) {
+      addToast("error", "No analysis to compare")
+      return
+    }
+    setComparisonOpen(true)
+    setComparison(null)
+    setComparisonError(null)
+    setComparisonLoading(true)
+    try {
+      setComparison(await api.getComparison(resumeId, analysis.id))
+    } catch (error) {
+      setComparisonError(
+        error instanceof Error ? error.message : "Could not load the comparison"
+      )
+    } finally {
+      setComparisonLoading(false)
+    }
   }
 
   // D3: store the tailored text as a per-job version (rewrites applied for real).
@@ -416,6 +444,12 @@ export default function Analysis({ navigate, addToast }: PageProps) {
   // C6: how many reviewed rewrites will actually change the exported bullets.
   const acceptedRewriteCount = Object.values(rewriteDecisions)
     .filter(d => d.action === "accepted" && (d.text ?? "").trim()).length
+  // D6: highlight the exact lines that differ between original and export.
+  const comparisonChanges = comparison?.changes ?? []
+  const originalLineChanged = (line: string) =>
+    comparisonChanges.some(change => line.includes(change.original))
+  const tailoredLineChanged = (line: string) =>
+    comparisonChanges.some(change => line.includes(change.tailored))
   // F5: without an analysis there is nothing to show -- never render a zeroed-out report.
   if (loadingAnalysis) {
     return (
@@ -928,6 +962,109 @@ export default function Analysis({ navigate, addToast }: PageProps) {
         </div>
       </div>
 
+      {/* D6: original vs. tailored comparison modal */}
+      {comparisonOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center bg-navy/40 p-4 overflow-y-auto"
+          onClick={() => setComparisonOpen(false)}
+        >
+          <div
+            className="w-full max-w-6xl my-8 bg-surface rounded-2xl border border-edge shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 px-6 py-5 border-b border-edge">
+              <div>
+                <p className="font-display font-semibold text-lg text-navy">Original vs. tailored</p>
+                <p className="text-xs text-mid mt-1">
+                  This is exactly what the DOCX and PDF exports contain — accepted rewrites only.
+                </p>
+                {comparison && (
+                  <p className="text-xs mt-1 text-dim">
+                    {comparison.changes.length > 0
+                      ? `${comparison.changes.length} accepted rewrite${comparison.changes.length === 1 ? "" : "s"} highlighted.`
+                      : "No rewrites accepted yet — the export keeps your original bullets."}
+                    {comparison.confirmed_keywords.length > 0 && (
+                      <> {comparison.confirmed_keywords.length} confirmed skill{comparison.confirmed_keywords.length === 1 ? "" : "s"} added: {comparison.confirmed_keywords.join(", ")}.</>
+                    )}
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={() => setComparisonOpen(false)}
+                className="p-2 rounded-lg hover:bg-off text-mid transition-colors"
+                aria-label="Close comparison"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {comparisonLoading && (
+              <div className="px-6 py-16 flex items-center justify-center gap-3 text-mid">
+                <RefreshCw size={18} className="animate-spin" />
+                <p className="text-sm">Building the comparison…</p>
+              </div>
+            )}
+            {!comparisonLoading && comparisonError && (
+              <div className="px-6 py-12 text-center">
+                <p className="text-sm text-red mb-2">{comparisonError}</p>
+                <button
+                  onClick={openComparison}
+                  className="px-4 py-2 text-xs font-semibold text-navy border border-edge rounded-xl hover:bg-off"
+                >
+                  Try again
+                </button>
+              </div>
+            )}
+            {!comparisonLoading && comparison && (
+              <div className="p-6">
+                <div className="grid md:grid-cols-2 gap-6">
+                  {[comparison.original, comparison.tailored].map((view, side) => (
+                    <div key={side}>
+                      <div className="mb-4 pb-3 border-b border-edge">
+                        <p className="text-[11px] font-semibold uppercase tracking-wider text-mid">
+                          {side === 0 ? "Original resume" : "Tailored export"}
+                        </p>
+                        <p className="text-sm font-semibold text-navy mt-1">{view.header.name || "—"}</p>
+                        {view.header.title && <p className="text-xs text-mid">{view.header.title}</p>}
+                        {view.header.contact.length > 0 && (
+                          <p className="text-[11px] text-dim mt-1 break-words">{view.header.contact.join("  |  ")}</p>
+                        )}
+                      </div>
+                      {view.sections.map(section => (
+                        <div key={section.key} className="mb-4">
+                          <p className="text-[11px] font-bold text-navy uppercase tracking-wider">{section.heading}</p>
+                          <div className="mt-1.5 space-y-1">
+                            {section.lines.map((line, i) => {
+                              const changed = side === 0 ? originalLineChanged(line) : tailoredLineChanged(line)
+                              const highlight = changed
+                                ? side === 0
+                                  ? "bg-red/5 border-l-2 border-red/40 text-mid line-through decoration-red/30"
+                                  : "bg-teal/10 border-l-2 border-teal text-navy font-medium"
+                                : "text-mid"
+                              return (
+                                <p
+                                  key={i}
+                                  className={`text-xs leading-relaxed whitespace-pre-wrap rounded px-2 py-1 ${highlight}`}
+                                >
+                                  {line}
+                                </p>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-dim mt-2">
+                  Only accepted rewrites and confirmed hard skills appear on the tailored side. Soft skills are never added to the Skills section.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Sticky export bar */}
       <div
         className="fixed bottom-0 left-0 right-0 z-30 border-t border-edge"
@@ -962,7 +1099,14 @@ export default function Analysis({ navigate, addToast }: PageProps) {
               </label>
             )}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              onClick={openComparison}
+              className="flex items-center gap-2 px-4 py-2.5 text-sm text-navy font-medium border border-edge rounded-xl hover:bg-off transition-all"
+            >
+              <ArrowLeftRight size={15} />
+              Compare original vs. tailored
+            </button>
             <button
               onClick={() => navigate("jobs")}
               className="px-4 py-2.5 text-sm text-navy font-medium border border-edge rounded-xl hover:bg-off transition-all"
@@ -970,16 +1114,27 @@ export default function Analysis({ navigate, addToast }: PageProps) {
               Analyze vs. Different Job
             </button>
             <button
-              onClick={handleExport}
-              disabled={exportLoading}
+              onClick={() => handleExport("pdf")}
+              disabled={exportingFormat !== null}
+              className="flex items-center gap-2 px-4 py-2.5 text-sm text-navy font-semibold border border-edge rounded-xl hover:bg-off transition-all disabled:opacity-70"
+            >
+              {exportingFormat === "pdf"
+                ? <div className="w-4 h-4 border-2 border-navy/30 border-t-navy rounded-full animate-spin" />
+                : <FileText size={15} />
+              }
+              Download PDF
+            </button>
+            <button
+              onClick={() => handleExport("docx")}
+              disabled={exportingFormat !== null}
               className="flex items-center gap-2 px-5 py-2.5 bg-teal text-navy font-bold text-sm rounded-xl hover:bg-teal-dim transition-all disabled:opacity-70"
               style={{ boxShadow: "0 2px 12px rgba(0,201,167,0.3)" }}
             >
-              {exportLoading
+              {exportingFormat === "docx"
                 ? <div className="w-4 h-4 border-2 border-navy/30 border-t-navy rounded-full animate-spin" />
                 : <Download size={15} />
               }
-              Download ATS-Optimized DOCX
+              Download DOCX
             </button>
           </div>
         </div>
