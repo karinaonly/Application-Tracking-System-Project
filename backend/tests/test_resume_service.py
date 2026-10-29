@@ -214,7 +214,7 @@ class ImprovementScoringTests(unittest.TestCase):
             resume if model is Resume else job if model is JobDescription else None
         )
 
-        def kw_side_effect(resume_text, jd_text):
+        def kw_side_effect(resume_text, jd_text, **_kwargs):
             covered = "Docker" in resume_text
             return {
                 "score": 100.0 if covered else 50.0, "score_available": True,
@@ -228,6 +228,32 @@ class ImprovementScoringTests(unittest.TestCase):
         # raw_text has no "Docker"; the tailored replacement does — after keywords re-scored
         self.assertEqual(imp["before"]["keywords"], 50.0)
         self.assertEqual(imp["after"]["keywords"], 100.0)
+
+    def test_job_skill_buckets_are_forwarded_to_keyword_engine(self):
+        """B8: D2's required/preferred buckets must reach the keyword engine."""
+        owner_id = uuid4()
+        resume = self._make_resume(owner_id)
+        self._mock_analyzers(40.0, 85.0)
+        self.service.ai.rewrite_bullets.return_value = {}
+
+        job_id = uuid4()
+        job = JobDescription(
+            id=job_id, user_id=owner_id, title="Backend", raw_text="Python Docker",
+            extracted_keywords={
+                "required_skills": ["Docker"],
+                "preferred_skills": ["Python"],
+                "other_skills": [],
+            },
+        )
+        self.service.session.get.side_effect = lambda model, _id: (
+            resume if model is Resume else job if model is JobDescription else None
+        )
+
+        self.service.analyze(resume.id, owner_id, job_id)
+
+        _, kwargs = self.service.kw_engine.analyze.call_args
+        self.assertEqual(kwargs["required_skills"], ["Docker"])
+        self.assertEqual(kwargs["preferred_skills"], ["Python"])
 
 
 class ExportAnalysisSelectionTests(unittest.TestCase):

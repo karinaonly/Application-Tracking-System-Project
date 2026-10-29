@@ -432,6 +432,15 @@ export default function Analysis({ navigate, addToast }: PageProps) {
   const passedChecks = report?.ats?.passed ?? []
   const matchedKws = report?.keyword_analysis?.matched_keywords ?? []
   const missingKws = report?.keyword_analysis?.missing_keywords ?? []
+  // B8: required skills weigh 3x and preferred 2x in the keyword score.
+  const kwWeighted = report?.keyword_analysis?.weighted === true
+  const kwDetails = report?.keyword_analysis?.keyword_details ?? []
+  const requiredMissing = kwWeighted
+    ? kwDetails.filter(d => d.importance === "required" && !d.in_resume).length
+    : 0
+  const preferredMissing = kwWeighted
+    ? kwDetails.filter(d => d.importance === "preferred" && !d.in_resume).length
+    : 0
   // A3: soft skills (Communication, Leadership, ...) are advice only — they
   // are never added to the Skills section; they belong in bullets.
   const softMissing = report?.keyword_analysis?.soft_missing_keywords ?? []
@@ -647,7 +656,7 @@ export default function Analysis({ navigate, addToast }: PageProps) {
               <p className="font-display font-semibold text-sm text-navy">Keyword Match</p>
             </div>
             <p className="font-code text-3xl font-medium text-red mb-1">{kwAvailable ? (analysis.keyword_score ?? "N/A") : "N/A"}{kwAvailable && analysis.keyword_score != null && <span className="text-lg text-mid">%</span>}</p>
-            <p className="text-xs text-dim mb-3">{kwAvailable ? `Cosine similarity: ${report?.keyword_analysis?.similarity ?? 0}%` : (report?.keyword_analysis?.reason ?? "Select a job description to score keywords.")}</p>
+            <p className="text-xs text-dim mb-3">{kwAvailable ? (kwWeighted ? `Required skills weigh 3×, preferred 2×. ${requiredMissing} required and ${preferredMissing} preferred still missing.` : "Share of recognized job skills found in your resume.") : (report?.keyword_analysis?.reason ?? "Select a job description to score keywords.")}</p>
             <div className="space-y-1.5">
               <div className="flex items-center gap-2">
                 <span className="text-xs text-mid w-14 shrink-0">Matched</span>

@@ -173,7 +173,6 @@ class ResumeService:
             "score": None,
             "score_available": False,
             "reason": "No job description selected.",
-            "similarity": None,
             "matched_keywords": [],
             "missing_keywords": [],
         }
@@ -185,7 +184,16 @@ class ResumeService:
             if not job_obj or job_obj.user_id != user_id:
                 raise JobNotFoundError()
             target_role = job_obj.title
-            kw_res = self.kw_engine.analyze(resume.raw_text, job_obj.raw_text)
+            # B8: use D2's required/preferred buckets so must-have skills
+            # weigh more than nice-to-have ones. Jobs parsed before D2 have
+            # no buckets, which falls back to plain coverage.
+            job_keywords = job_obj.extracted_keywords or {}
+            kw_res = self.kw_engine.analyze(
+                resume.raw_text,
+                job_obj.raw_text,
+                required_skills=job_keywords.get("required_skills"),
+                preferred_skills=job_keywords.get("preferred_skills"),
+            )
 
         overall, weights_used = compute_overall({
             "ats": ats_res["score"],

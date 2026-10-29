@@ -111,6 +111,61 @@ class ScoreTests(unittest.TestCase):
         self.assertIsNone(r["score"])
 
 
+class WeightingTests(unittest.TestCase):
+    """B8: required skills weigh more than preferred ones."""
+
+    JD = "Requirements: Python, Docker, AWS and Kubernetes."
+    RESUME = "Built services with Python, Docker, and AWS."
+
+    def test_missing_required_skill_costs_more_than_missing_preferred(self):
+        required = ke.analyze(
+            self.RESUME, self.JD,
+            required_skills=["Kubernetes"], preferred_skills=[],
+        )
+        preferred = ke.analyze(
+            self.RESUME, self.JD,
+            required_skills=[], preferred_skills=["Kubernetes"],
+        )
+
+        # 3 matched skills at weight 1; the missing one is 3x vs 2x.
+        self.assertEqual(required["score"], 50.0)
+        self.assertEqual(preferred["score"], 60.0)
+        self.assertLess(required["score"], preferred["score"])
+
+    def test_importance_is_reported_per_skill(self):
+        r = ke.analyze(
+            self.RESUME, self.JD,
+            required_skills=["Kubernetes"], preferred_skills=["Docker"],
+        )
+        details = {d["skill"]: d for d in r["keyword_details"]}
+
+        self.assertEqual(details["Kubernetes"]["importance"], "required")
+        self.assertEqual(details["Docker"]["importance"], "preferred")
+        self.assertEqual(details["Python"]["importance"], "other")
+        self.assertTrue(r["weighted"])
+
+    def test_without_buckets_the_score_is_plain_coverage(self):
+        r = ke.analyze(self.RESUME, self.JD)
+        self.assertFalse(r["weighted"])
+        self.assertEqual(r["score"], 75.0)
+
+    def test_unknown_bucket_names_do_not_break_weighting(self):
+        r = ke.analyze(
+            self.RESUME, self.JD,
+            required_skills=["Skill Not In This JD"], preferred_skills=[],
+        )
+        self.assertEqual(r["score"], 75.0)
+        # Nothing recognized was actually reweighted, so the UI must not
+        # claim the score is weighted.
+        self.assertFalse(r["weighted"])
+
+    def test_tfidf_similarity_is_gone(self):
+        # B7: the two-document TF-IDF cosine was noisy and is no longer
+        # reported; the weighted keyword score is the coverage metric.
+        r = ke.analyze(self.RESUME, self.JD)
+        self.assertNotIn("similarity", r)
+
+
 class SoftSkillSeparationTests(unittest.TestCase):
     """A3: soft skills are advice only — never added to the skills section."""
 

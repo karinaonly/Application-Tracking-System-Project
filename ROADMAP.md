@@ -175,13 +175,15 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   *Fix:* add an alias map and normalize both sides before comparing.
   ✅ *Done 2026-09-28: Alias map added (k8s, postgres, js, ci/cd...). Extend over time.*
 
-- [ ] **B7 (P1): TF-IDF over two documents is noisy** · `analyzer/keyword_engine.py`
+- [x] **B7 (P1): TF-IDF over two documents is noisy** · `analyzer/keyword_engine.py`
   IDF carries almost no signal with only two documents.
   *Fix:* switch to local embeddings (e.g. a small sentence-transformers model) for the similarity score.
+  ✅ *Done 2026-10-29: the two-document TF-IDF cosine was removed entirely — with only a resume and a JD, IDF carries almost no signal and the number looked precise without being meaningful. The weighted keyword coverage score is now the coverage metric (see B8), and `similarity` is no longer computed, stored, or shown. `scikit-learn` was dropped from `requirements.txt`, removing a heavyweight dependency. Local sentence embeddings remain a possible future semantic upgrade, but are not needed for an honest coverage number.*
 
-- [ ] **B8 (P2): Separate required vs. preferred skills** · `analyzer/keyword_engine.py`
+- [x] **B8 (P2): Separate required vs. preferred skills** · `analyzer/keyword_engine.py`
   All JD keywords are weighted equally.
   *Fix:* weight "required / must have" higher than "nice to have".
+  ✅ *Done 2026-10-29: the keyword engine now consumes D2's parsed buckets and weights each recognized skill by importance — required 3×, preferred 2×, everything else 1× — so a missing "must have" hurts more than a missing "nice to have". Each `keyword_details` entry reports its `importance`, and the result carries `weighted: true` only when buckets were supplied; jobs parsed before D2 (no buckets) fall back to the old plain-coverage score. The UI explains the weighting and shows how many required/preferred skills are still missing. Covered by 5 engine tests plus a service test proving the buckets are forwarded.*
 
 - [ ] **B9 (P2): ATS checks are shallow** · `analyzer/ats_checker.py`, `parser/text_extractor.py`
   `has_headers` and `has_footers` are DOCX-only, so PDFs always pass. There are no checks for multi-column layouts, images or icons, unusual fonts, missing dates, or file naming.
@@ -412,12 +414,12 @@ Counts verified against the item list on 2026-10-23. (F14 is unused; numbering j
 | Section | Items | Done |
 |---|---|---|
 | A. Bugs | 22 | 19 |
-| B. Scoring | 11 | 7 |
+| B. Scoring | 11 | 9 |
 | C. AI Rewriter | 13 | 12 |
 | D. Features | 8 | 4 |
 | E. Security & Config | 6 | 4 |
 | F. Hygiene | 17 | 12 |
-| **Total** | **77** | **58** |
+| **Total** | **77** | **60** |
 
 Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrites from Groq, no fallbacks), A13 (a real resume export keeps its tech spellings), E1 (empty `JWT_SECRET` aborts startup), E2 (allowed preflight 200 / foreign origin 400), and E5 (zero SQL-echo lines in the live log). A14's new certifications/languages sections are fixture-tested because the current real resume has neither; A19 is build-verified but still needs a UI click-through to become 🟢. The rest of the C section remains unit-tested only (🟡) until each item is exercised individually.
 
@@ -427,6 +429,7 @@ Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrit
 
 | Date | Item(s) | What changed | Notes |
 |---|---|---|---|
+| 2026-10-29 | B7, B8 | The keyword score now respects how a job asks for each skill: D2's required / preferred / other buckets weight recognized skills 3× / 2× / 1×, so a missing must-have costs more than a missing nice-to-have. Each `keyword_details` entry reports its `importance`, and results carry `weighted` (false for pre-D2 jobs, which keep the old plain coverage). The noisy two-document TF-IDF cosine (`similarity`) was removed entirely — with only two documents IDF carries almost no signal — and `scikit-learn` was dropped from `requirements.txt`; the weighted coverage score is now the single coverage number. The UI explains the weighting and counts missing required/preferred skills. | 261 backend tests pass (5 engine weighting tests + 1 service test proving the buckets are forwarded); `bun run build` clean. Counts: B 7 → 9, total 58 → 60. |
 | 2026-10-29 | A5 | Closed by C6: the review card offers "Use this" on both the moderate and aggressive variant, and the exporter applies the accepted text instead of only `ai_output`. No separate per-bullet picker is needed. | Roadmap-only entry; behavior shipped with C6 and verified by its tests. Counts: A 18 → 19, total 57 → 58. |
 | 2026-10-29 | D4 (remainder) | URL import now extracts the real employer from the page's schema.org `JobPosting` JSON-LD (`hiringOrganization`, dict/string, `@graph` supported) instead of writing "Extracted from web". With no schema the company stays empty and the UI shows "Company not provided" — no invented name. The visible `<h1>` is captured before `<header>` is stripped, fixing headlines that were previously lost, with the JSON-LD title as fallback; malformed JSON-LD is ignored. | 255 backend tests pass (7 new mocked-HTTP tests). Counts: D 3 → 4, total 56 → 57. |
 | 2026-10-29 | A2 | Strong-verb detection no longer misses ordinary resume verbs. The curated list grew by ~100 verbs, and a small deterministic morphology (`is_strong_action_verb`) recognizes base/past/gerund forms — regular `-ed/-ing` stripping with doubled-consonant and silent-`e` handling, plus irregular past forms (`wrote`, `led`, `ran`, `oversaw`, …). No spaCy dependency. Weak verbs and unrelated `-ed` words stay unclassified. | 248 backend tests pass (4 new covering 12 previously-missing verbs, base/gerund forms, weak verbs, and false positives). Counts: A 17 → 18, total 55 → 56. |

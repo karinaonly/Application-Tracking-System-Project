@@ -89,9 +89,16 @@ export interface ResumeAnalysis {
     keyword_analysis?: {
       score?: number | null
       score_available?: boolean
+      // B8: true when required/preferred buckets from the job parser were
+      // used to weight the score (required 3x, preferred 2x).
+      weighted?: boolean
       reason?: string | null
-      similarity?: number | null
-      keyword_details?: Array<{ skill: string; jd_mentions: number; in_resume: boolean }>
+      keyword_details?: Array<{
+        skill: string
+        jd_mentions: number
+        in_resume: boolean
+        importance?: "required" | "preferred" | "other"
+      }>
       other_terms_missing?: string[]
       matched_keywords?: string[]
       missing_keywords?: string[]

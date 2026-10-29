@@ -18,7 +18,7 @@ plus AI rewrites that are stored, auditable, and never invent experience you don
 - **Resume upload & parsing** — PDF/DOCX/TXT → contact, summary, skills, experience,
   projects, education, certifications (structured + raw).
 - **Analysis against a saved job** — ATS compatibility checks, bullet impact (verbs,
-  metrics), keyword match (curated skills taxonomy + cosine similarity), grammar.
+  metrics), keyword match (curated skills taxonomy, weighted by required vs. preferred), grammar.
 - **AI bullet rewrites** — batched, with per-rewrite provenance (`groq` / `guard_rejected`),
   retry variants, and a before/after improvement projection re-scored over the same
   bullet population.
@@ -39,7 +39,7 @@ plus AI rewrites that are stored, auditable, and never invent experience you don
 |----------|-------------------------------------------------------------|
 | Backend  | Python 3.10+, FastAPI, SQLModel, SQLite                     |
 | AI       | Groq (default) via the OpenAI-compatible client; OpenAI/Gemini optional |
-| Parsing  | pdfplumber, PyMuPDF, python-docx, spaCy (optional), scikit-learn (optional) |
+| Parsing  | pdfplumber, PyMuPDF, python-docx, spaCy (optional)          |
 | Frontend | React 19, Vite, Tailwind CSS v4, TypeScript, bun            |
 
 ## Project layout

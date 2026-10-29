@@ -4,13 +4,6 @@ from collections import Counter
 from app.common.skills import HARD_SKILLS, CASE_SENSITIVE, SOFT_SKILL_GROUPS
 
 try:
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    from sklearn.metrics.pairwise import cosine_similarity
-except Exception:  # sklearn missing -> similarity is skipped, everything else still works
-    TfidfVectorizer = None
-    cosine_similarity = None
-
-try:
     import spacy
     nlp = spacy.load("en_core_web_sm")
 except Exception:
@@ -64,18 +57,53 @@ _PRONOUNS = {"we", "you", "your", "our", "us", "they", "them", "their", "who", "
 
 MIN_SCORABLE_SKILLS = 3  # below this, a keyword score would be meaningless
 
+# B8: a missing "must have" should hurt more than a missing "nice to have".
+# Jobs parsed before D2 have no buckets, so every skill falls back to "other"
+# and the score is the same plain coverage as before.
+IMPORTANCE_WEIGHTS = {"required": 3, "preferred": 2, "other": 1}
+
 
 class KeywordEngine:
-    def analyze(self, resume_text: str, jd_text: str) -> dict:
+    def analyze(
+        self,
+        resume_text: str,
+        jd_text: str,
+        required_skills: list[str] | None = None,
+        preferred_skills: list[str] | None = None,
+    ) -> dict:
+        required = {s.strip().lower() for s in (required_skills or []) if s}
+        preferred = {s.strip().lower() for s in (preferred_skills or []) if s}
         jd_skills = self._extract_skills(jd_text)          # ranked list of (name, count_in_jd)
         details, matched, missing = [], [], []
+        matched_weight = 0
+        total_weight = 0
+        weighted = False
         for name, count in jd_skills:
             in_resume = self._contains(resume_text, name)
-            details.append({"skill": name, "jd_mentions": count, "in_resume": in_resume})
+            if name.lower() in required:
+                importance = "required"
+            elif name.lower() in preferred:
+                importance = "preferred"
+            else:
+                importance = "other"
+            if importance != "other":
+                weighted = True
+            weight = IMPORTANCE_WEIGHTS[importance]
+            total_weight += weight
+            if in_resume:
+                matched_weight += weight
+            details.append({
+                "skill": name,
+                "jd_mentions": count,
+                "in_resume": in_resume,
+                "importance": importance,
+            })
             (matched if in_resume else missing).append(name)
 
         available = len(jd_skills) >= MIN_SCORABLE_SKILLS
-        score = round(len(matched) / len(jd_skills) * 100, 1) if available else None
+        # B8: weighted coverage. With no bucket information every weight is 1,
+        # which is exactly the previous unweighted score.
+        score = round(matched_weight / total_weight * 100, 1) if available else None
 
         other_terms = self._extract_other_terms(jd_text, exclude={n.lower() for n, _ in jd_skills})
         missing_other = [t for t in other_terms if not self._contains_plain(resume_text, t)]
@@ -88,11 +116,17 @@ class KeywordEngine:
         return {
             "score": score,                        # None => not enough recognizable skills in the JD
             "score_available": available,
+            # B8: true only when the job parser supplied required/preferred
+            # buckets; lets the UI explain why this score differs from plain
+            # skill coverage.
+            "weighted": weighted,
             "reason": None if available else (
                 f"Only {len(jd_skills)} recognizable skill(s) found in the job description. "
                 "Paste the full description, or extend the skills list."
             ),
-            "similarity": self._similarity(resume_text, jd_text),
+            # B7: the old two-document TF-IDF "similarity" was removed. IDF
+            # over two documents carries almost no signal, and the weighted
+            # keyword score is the meaningful coverage number.
             "total_jd_keywords": len(jd_skills),
             "matched_keywords": matched,           # ranked by how often the JD mentions them
             "missing_keywords": missing,
@@ -159,13 +193,3 @@ class KeywordEngine:
             first_seen.setdefault(low, chunk.start_char)
         ranked = sorted(counts, key=lambda k: (-counts[k], first_seen[k], k))
         return ranked[:limit]
-
-    def _similarity(self, resume_text: str, jd_text: str) -> float:
-        if not TfidfVectorizer:
-            return 0.0
-        try:
-            vec = TfidfVectorizer(stop_words="english")
-            mat = vec.fit_transform([resume_text, jd_text]).toarray()
-            return round(float(cosine_similarity(mat[0:1], mat[1:2])[0][0]) * 100, 1)
-        except Exception:
-            return 0.0
