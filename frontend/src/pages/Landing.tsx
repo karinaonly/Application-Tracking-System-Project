@@ -176,7 +176,7 @@ export default function Landing({ navigate }: LandingProps) {
               <Zap size={16} className="text-teal" fill="#00C9A7" />
             </div>
             <span className="font-display font-bold text-white text-[15px] tracking-tight">
-              ResumeATS <span className="text-teal">Pro</span>
+              Land<span className="text-teal">It</span>
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -220,7 +220,7 @@ export default function Landing({ navigate }: LandingProps) {
               by Robots.
             </h1>
             <p className="text-white/60 text-lg leading-relaxed mb-8 max-w-lg">
-              Most resumes are rejected by ATS software before a human ever reads them. ResumeATS Pro analyzes your resume against any job description and gives you an exact roadmap to pass through.
+              Most resumes are rejected by ATS software before a human ever reads them. LandIt analyzes your resume against any job description and gives you an exact roadmap to pass through.
             </p>
             <div className="flex flex-col sm:flex-row gap-3 mb-10">
               <button
@@ -356,9 +356,9 @@ export default function Landing({ navigate }: LandingProps) {
         <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <Zap size={14} className="text-teal" fill="#00C9A7" />
-            <span className="text-white/60 text-sm font-display font-semibold">ResumeATS Pro</span>
+            <span className="text-white/60 text-sm font-display font-semibold">LandIt</span>
           </div>
-          <p className="text-white/30 text-xs">© 2026 ResumeATS Pro. ATS resume analysis with reviewable suggestions.</p>
+          <p className="text-white/30 text-xs">© 2026 LandIt. ATS resume analysis with reviewable suggestions.</p>
           <span className="text-white/20 text-xs font-code">v1.0</span>
         </div>
       </footer>

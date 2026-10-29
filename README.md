@@ -1,4 +1,4 @@
-# ResumeATS Pro (ATS Resume Fixer)
+# LandIt
 
 A local-first ATS resume inspection & optimization engine. Upload a resume, save a job
 description, and get an honest analysis: ATS compatibility, bullet impact, keyword match —

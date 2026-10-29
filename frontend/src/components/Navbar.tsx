@@ -26,7 +26,7 @@ export default function Navbar({ currentPage, navigate, onLogout }: NavbarProps)
             <Zap size={16} className="text-teal" fill="#00C9A7" />
           </div>
           <span className="font-display font-bold text-navy text-[15px] tracking-tight">
-            ResumeATS <span className="text-teal">Pro</span>
+            Land<span className="text-teal">It</span>
           </span>
         </button>
 

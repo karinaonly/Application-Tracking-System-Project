@@ -15,12 +15,12 @@ async def lifespan(app: FastAPI):
     validate_security_settings(get_settings())
     init_db()
     print("✅ Database schema is up to date (Alembic).")
-    print("🚀 ATS Resume Fixer API is live on http://127.0.0.1:8000")
+    print("🚀 LandIt API is live on http://127.0.0.1:8000")
     print("📚 Open Swagger Docs: http://127.0.0.1:8000/docs")
     yield
 
 app = FastAPI(
-    title="ATS Resume Fixer (Local Edition)",
+    title="LandIt (Local Edition)",
     description="Your personal, local ATS resume inspection & optimization engine.",
     version="1.0.0",
     lifespan=lifespan
@@ -42,4 +42,4 @@ app.include_router(cover_letter_router, prefix="/cover-letters", tags=["Cover Le
 
 @app.get("/")
 def root():
-    return {"message": "ATS Resume Fixer API is running locally.", "docs": "/docs"}
+    return {"message": "LandIt API is running locally.", "docs": "/docs"}

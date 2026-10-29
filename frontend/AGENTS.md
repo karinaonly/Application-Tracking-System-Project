@@ -1,6 +1,6 @@
-# ATS Resume Optimizer — frontend
+# LandIt — frontend
 
-React 19 + Vite + Tailwind CSS v4 frontend for the ATS resume optimizer. This is
+React 19 + Vite + Tailwind CSS v4 frontend for LandIt. This is
 a standalone Vite app; it does not use Figma Make.
 
 ## Development

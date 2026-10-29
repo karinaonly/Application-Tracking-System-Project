@@ -1,4 +1,4 @@
-"""Alembic environment for the ATS resume optimizer.
+"""Alembic environment for LandIt.
 
 The database URL always comes from the application settings, so the CLI and the
 running app can never migrate different databases by accident.

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Create a runnable copy of the current ATS Resume Fixer project.
+"""Create a runnable copy of the current LandIt project.
 
 Run from anywhere:
-    python backend/setup_project.py --destination ./ats-resume-fixer-copy
+    python backend/setup_project.py --destination ./landit-copy
 
 The script copies the source files that are currently in this repository. It
 does not copy local secrets, installed dependencies, databases, or uploads.
@@ -83,8 +83,8 @@ def main() -> None:
     parser.add_argument(
         "--destination",
         type=Path,
-        default=Path("ats-resume-fixer-copy"),
-        help="Folder to create (default: ./ats-resume-fixer-copy)",
+        default=Path("landit-copy"),
+        help="Folder to create (default: ./landit-copy)",
     )
     args = parser.parse_args()
 
@@ -96,7 +96,7 @@ def main() -> None:
         raise SystemExit("Destination must be different from the current project root.")
 
     print("\n" + "=" * 60)
-    print("ATS RESUME FIXER - CURRENT PROJECT BOOTSTRAP")
+    print("LANDIT - CURRENT PROJECT BOOTSTRAP")
     print("=" * 60)
     print(f"Source:      {source_root}")
     print(f"Destination: {destination}\n")

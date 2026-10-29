@@ -271,7 +271,7 @@ class PdfExporter(ResumeContentBuilder):
             title=name or "Resume",
             author=name,
             subject="Resume",
-            creator="ATS Resume Optimizer",
+            creator="LandIt",
         )
         document.build(story)
         return buffer.getvalue()

@@ -124,7 +124,7 @@ export default function Auth({ mode, navigate, onLogin }: AuthProps) {
           <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center">
             <Zap size={16} className="text-teal" fill="#00C9A7" />
           </div>
-          <span className="font-display font-bold text-white text-[15px]">ResumeATS <span className="text-teal">Pro</span></span>
+          <span className="font-display font-bold text-white text-[15px]">Land<span className="text-teal">It</span></span>
         </div>
 
         <div className="relative">
@@ -179,7 +179,7 @@ export default function Auth({ mode, navigate, onLogin }: AuthProps) {
             <div className="w-7 h-7 rounded-lg bg-navy flex items-center justify-center">
               <Zap size={14} className="text-teal" fill="#00C9A7" />
             </div>
-            <span className="font-display font-bold text-navy text-sm">ResumeATS <span className="text-teal">Pro</span></span>
+            <span className="font-display font-bold text-navy text-sm">Land<span className="text-teal">It</span></span>
           </div>
 
           <h1 className="font-display font-bold text-2xl text-navy mb-1.5">
