@@ -309,16 +309,36 @@ export default function Analysis({ navigate, addToast }: PageProps) {
   // C6: per-rewrite review decisions. Only accepted ones reach the export.
   const [rewriteDecisions, setRewriteDecisions] = useState<Record<string, RewriteDecision>>({})
   const [rewriteSaving, setRewriteSaving] = useState<string | null>(null)
-  const analysis = api.getLastAnalysis()
+  // F8: the page stores only ids in sessionStorage and reloads the analysis
+  // from the API, so a refresh (or reopening the tab) keeps the same report.
+  const [analysis, setAnalysis] = useState<api.ResumeAnalysis | null>(null)
+  const [loadingAnalysis, setLoadingAnalysis] = useState(true)
+  const [resumeId, setResumeId] = useState<string | null>(null)
   const resumeMeta = api.getLastResumeMeta()
 
-  // The saved report is the source of truth when the page loads.
   useEffect(() => {
-    setRewriteDecisions((analysis?.report?.rewrite_decisions ?? {}) as Record<string, RewriteDecision>)
-  }, [analysis?.id])
+    const storedResumeId = api.getLastResumeId()
+    const storedAnalysisId = api.getLastAnalysisId()
+    setResumeId(storedResumeId)
+    if (!storedResumeId || !storedAnalysisId) {
+      setLoadingAnalysis(false)
+      return
+    }
+    let cancelled = false
+    api.getAnalysis(storedResumeId, storedAnalysisId)
+      .then(data => {
+        if (cancelled) return
+        setAnalysis(data)
+        setRewriteDecisions((data.report?.rewrite_decisions ?? {}) as Record<string, RewriteDecision>)
+      })
+      .catch(() => {
+        if (!cancelled) addToast("error", "Could not load that analysis. Run it again from the Upload page.")
+      })
+      .finally(() => { if (!cancelled) setLoadingAnalysis(false) })
+    return () => { cancelled = true }
+  }, [addToast])
 
   const handleExport = async () => {
-    const resumeId = api.getLastResumeId()
     if (!resumeId) { addToast("error", "No resume selected for export"); return }
     setExportLoading(true)
     addToast("info", "Generating ATS-optimized DOCX…")
@@ -337,7 +357,6 @@ export default function Analysis({ navigate, addToast }: PageProps) {
 
   // D3: store the tailored text as a per-job version (rewrites applied for real).
   const handleSaveVersion = async () => {
-    const resumeId = api.getLastResumeId()
     if (!resumeId || !analysis?.id) { addToast("error", "No resume selected"); return }
     setSaveVersionLoading(true)
     try {
@@ -354,19 +373,15 @@ export default function Analysis({ navigate, addToast }: PageProps) {
   }
 
   const handleConfirmKeywords = async () => {
-    const resumeId = api.getLastResumeId()
     if (!resumeId || !analysis?.id || selectedKws.length === 0) return
     setConfirmLoading(true)
     try {
       const res = await api.confirmKeywords(resumeId, analysis.id, selectedKws)
       setNewlyConfirmed(res.confirmed_keywords)
       setSelectedKws([])
-      if (analysis.report) {
-        api.saveLastAnalysis({
-          ...analysis,
-          report: { ...analysis.report, confirmed_keywords: res.confirmed_keywords },
-        })
-      }
+      setAnalysis(prev => prev && prev.report
+        ? { ...prev, report: { ...prev.report, confirmed_keywords: res.confirmed_keywords } }
+        : prev)
       if (res.soft_skipped && res.soft_skipped.length > 0) {
         addToast("info", `${res.soft_skipped.join(", ")} ${res.soft_skipped.length === 1 ? "is a soft skill" : "are soft skills"} — show ${res.soft_skipped.length === 1 ? "it" : "them"} in your bullets instead, not in Skills.`)
       }
@@ -382,18 +397,14 @@ export default function Analysis({ navigate, addToast }: PageProps) {
     action: "accepted" | "rejected" | "pending",
     text?: string,
   ) => {
-    const resumeId = api.getLastResumeId()
     if (!resumeId || !analysis?.id) { addToast("error", "No resume selected"); return }
     setRewriteSaving(original)
     try {
       const res = await api.saveRewriteDecisions(resumeId, analysis.id, [{ original, action, text }])
       setRewriteDecisions(res.rewrite_decisions as Record<string, RewriteDecision>)
-      if (analysis.report) {
-        api.saveLastAnalysis({
-          ...analysis,
-          report: { ...analysis.report, rewrite_decisions: res.rewrite_decisions },
-        })
-      }
+      setAnalysis(prev => prev && prev.report
+        ? { ...prev, report: { ...prev.report, rewrite_decisions: res.rewrite_decisions } }
+        : prev)
       if (action === "accepted") addToast("success", "Rewrite accepted — the export will use this text.")
       else if (action === "rejected") addToast("info", "Rewrite rejected — your original bullet stays as written.")
       else addToast("info", "Review undone — this rewrite is unreviewed again.")
@@ -406,6 +417,16 @@ export default function Analysis({ navigate, addToast }: PageProps) {
   const acceptedRewriteCount = Object.values(rewriteDecisions)
     .filter(d => d.action === "accepted" && (d.text ?? "").trim()).length
   // F5: without an analysis there is nothing to show -- never render a zeroed-out report.
+  if (loadingAnalysis) {
+    return (
+      <div className="min-h-screen bg-warm flex items-center justify-center">
+        <div className="flex items-center gap-3 text-mid">
+          <RefreshCw size={18} className="animate-spin" />
+          <p className="text-sm">Loading analysis…</p>
+        </div>
+      </div>
+    )
+  }
   if (!analysis) {
     return (
       <div className="min-h-screen bg-warm">

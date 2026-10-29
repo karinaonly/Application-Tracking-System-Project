@@ -1,41 +1,38 @@
-# figma-make-app
+# ATS Resume Optimizer — frontend
 
-React + Vite + Tailwind CSS project running inside Figma Make.
+React 19 + Vite + Tailwind CSS v4 frontend for the ATS resume optimizer. This is
+a standalone Vite app; it does not use Figma Make.
 
-## Development Server
+## Development
 
-A Vite development server is **already running** on `$PORT` (default 8443). You don't need to start it manually.
+```bash
+bun install
+bun run dev      # Vite dev server on http://localhost:8443
+bun run build    # tsc --noEmit && vite build
+bun run preview  # serve the production build
+```
 
-- Preview URL: The user can access the running app through the preview panel
-- Hot reload: Changes to source files are reflected immediately
+The API URL defaults to `http://127.0.0.1:8000`. Override it with
+`VITE_API_URL` (for example in `frontend/.env.local`).
 
-## Project Structure
+## Project structure
 
-This is the canonical project structure. Start with task-relevant files below. Only follow imports or inspect other files when required, when a documented path is missing, or when the repository contradicts this guide.
-
-- `src/main.tsx` - React entrypoint; imports `src/index.css` and mounts `src/App.tsx` into the `#root` element
-- `src/App.tsx` - Primary application component and the usual starting point for UI work
-- `src/index.css` - Global CSS entrypoint and Tailwind CSS v4 import
-- `index.html` - Vite HTML shell containing the `#root` element and loading `src/main.tsx`
-- `package.json` - Project dependencies and the Vite build, development, preview, and formatting scripts
-- `vite.config.ts` - Vite configuration with React, Tailwind CSS v4, and Figma Make plugins plus the `@` alias for `src`
-- `.mise.toml` - Toolchain versions for Node.js and pnpm
-
-## Dependencies
-
-- Runtime: React 19 and React DOM 19
-- Styling: Tailwind CSS v4 with the `@tailwindcss/vite` plugin
-- Build tooling: Vite 8, TypeScript 5.7, and `@vitejs/plugin-react`
-- Formatting: oxfmt
+- `src/main.tsx` — React entrypoint; imports `src/index.css` and mounts `src/App.tsx`
+- `src/App.tsx` — page switch, auth bootstrap, and toasts
+- `src/api.ts` — typed API client (auth, resumes, jobs, analyses, exports)
+- `src/pages/` — Landing, Auth, Dashboard, Upload, JobDescriptions, Analysis, Settings
+- `src/components/` — Navbar, Toast, and shared UI
+- `src/types.ts` — shared page/toast types
+- `src/index.css` — Tailwind CSS v4 import and theme tokens
 
 ## Styling
 
-This project uses **Tailwind CSS v4** through the `@tailwindcss/vite` plugin configured in `vite.config.ts`. `src/index.css` imports Tailwind with `@import 'tailwindcss';`. Use Tailwind utility classes directly in JSX and put global CSS or Tailwind v4 theme customization in `src/index.css`. This scaffold does not need a Tailwind config file or PostCSS config.
-
-`src/main.tsx` imports `src/index.css`, so global font wiring belongs in `src/index.css`. Keep CSS `@import` statements first, then add any `@font-face` rules and font-family defaults there.
+Tailwind CSS v4 is wired through `@tailwindcss/vite`; `src/index.css` imports
+Tailwind and defines the project's theme tokens. Use Tailwind utility classes in
+JSX. No `tailwind.config.js` or PostCSS config is needed.
 
 ## Code quality
 
-- Use double quotes for strings containing apostrophes (`"We're here to help"`), or escape them in single-quoted strings. An unescaped apostrophe in a single-quoted string breaks the build.
-- Ensure JSX tags are closed and braces are balanced.
-- Export components as default exports.
+- `bun run build` runs TypeScript before bundling, so a type error fails the build.
+- Use double quotes for strings containing apostrophes, or escape them.
+- Keep components as default exports, matching the existing pages.

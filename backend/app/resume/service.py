@@ -294,7 +294,14 @@ class ResumeService:
             tailored_text = resume.raw_text
             for orig, opt in applied.items():
                 tailored_text = self._replace_bullet_text(tailored_text, orig, opt["ai_output"])
-            after_keywords = self.kw_engine.analyze(tailored_text, job_obj.raw_text)
+            after_keywords = self.kw_engine.analyze(
+                tailored_text,
+                job_obj.raw_text,
+                # B8: the before-score is weighted, so the after-score must be
+                # too — otherwise the improvement comparison is not like-for-like.
+                required_skills=(job_obj.extracted_keywords or {}).get("required_skills"),
+                preferred_skills=(job_obj.extracted_keywords or {}).get("preferred_skills"),
+            )
 
         # ATS compatibility is format-based: bullet rewrites don't change it, so
         # it carries over unchanged rather than being faked as improved.
@@ -318,6 +325,17 @@ class ResumeService:
                 "keywords": (after_keywords or {}).get("score"),
             },
         }
+
+    def get_analysis(self, resume_id: UUID, analysis_id: UUID, user_id: UUID) -> ResumeAnalysis:
+        """F8: fetch one stored analysis by id so the UI can reload it after a
+        refresh instead of relying on sessionStorage."""
+        resume = self.session.get(Resume, resume_id)
+        if not resume or resume.user_id != user_id:
+            raise ResumeNotFoundError()
+        analysis = self.session.get(ResumeAnalysis, analysis_id)
+        if not analysis or analysis.resume_id != resume_id:
+            raise AnalysisNotFoundError()
+        return analysis
 
     def export_docx(
         self,

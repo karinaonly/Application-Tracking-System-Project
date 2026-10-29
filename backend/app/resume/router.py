@@ -69,6 +69,17 @@ def analyze_resume(
     service = ResumeService(session)
     return service.analyze(resume_id, user.id, job_id)
 
+@router.get("/{resume_id}/analyses/{analysis_id}")
+def get_analysis(
+    resume_id: UUID,
+    analysis_id: UUID,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """F8: reload the analysis the UI is viewing after a refresh."""
+    service = ResumeService(session)
+    return service.get_analysis(resume_id, analysis_id, user.id)
+
 @router.get("/{resume_id}/export")
 def export_resume(
     resume_id: UUID,

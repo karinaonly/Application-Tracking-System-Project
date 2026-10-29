@@ -360,13 +360,15 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   *Fix:* instantiate once at startup.
   ✅ *Done 2026-10-29: `ResumeService` now pulls every analyzer from a process-wide `@lru_cache` (`_shared_components()`): extractor, section parser, ATS checker, keyword engine, bullet analyzer, grammar checker, AI rewriter, exporter. The expensive `SpellChecker` load and the AI client are paid once instead of per request; instances are stateless, and `clear_shared_components()` exists for tests/config reloads. Verified: two services share the same objects and `AIRewriter` is constructed exactly once.*
 
-- [ ] **F7 (P2): Frontend still Figma Make boilerplate** · `frontend/`
+- [x] **F7 (P2): Frontend still Figma Make boilerplate** · `frontend/`
   `package.json` name is `figma-make-app`, and `AGENTS.md`, `CLAUDE.md`, `.figma/`, and `.mise.toml` describe the Figma environment.
   *Fix:* rename the package and remove or replace the boilerplate files.
+  ✅ *Done 2026-10-29: the package is now `ats-resume-optimizer` (also updated in `bun.lock`), `vite.config.ts` is a plain React + Tailwind config instead of the Figma Make plugin stack, and `index.html` uses real metadata ("ATS Resume Optimizer", description, noindex) instead of `<!-- figma:* -->` slots. The tracked `.figma/` directory was removed, `AGENTS.md` now documents this standalone app, and a static `public/robots.txt` keeps the previous no-index behavior. `.mise.toml` was already accurate (Node 22 / bun) and stays.*
 
-- [ ] **F8 (P2): Last analysis lives in `sessionStorage`** · `frontend/src/api.ts`
+- [x] **F8 (P2): Last analysis lives in `sessionStorage`** · `frontend/src/api.ts`
   A refresh loses context.
   *Fix:* fetch the analysis by ID from the API.
+  ✅ *Done 2026-10-29: the frontend now stores only the resume/analysis ids and reloads the report from a new `GET /resumes/{resume_id}/analyses/{analysis_id}` endpoint (ownership-checked; 404 for another resume's or an unknown id). The Analysis page shows a loading state, fetches on mount, and keeps its local copy in React state when keywords/rewrites are confirmed — no serialized report is trusted. Dashboard and Upload write the ids when opening a report, and Dashboard's "View latest report" now opens the newest analyzed file. Covered by 4 service tests; live check confirmed 200 for the requested analysis and 404 for cross-resume/unknown ids.*
 
 - [x] **F9 (P2): Hardcoded absolute path** · `.vscode/settings.json`
   `d:\Projects\Application Tracking System - Personal\...` breaks on any other machine.
@@ -421,8 +423,8 @@ Counts verified against the item list on 2026-10-23. (F14 is unused; numbering j
 | C. AI Rewriter | 13 | 12 |
 | D. Features | 8 | 4 |
 | E. Security & Config | 6 | 4 |
-| F. Hygiene | 17 | 13 |
-| **Total** | **77** | **64** |
+| F. Hygiene | 17 | 15 |
+| **Total** | **77** | **66** |
 
 Counts note: the F row previously read 12, but 13 of the 17 F items are checked (F7, F8, F10, F12 remain), so earlier totals in the change log were one low. The table above is verified against the item list.
 
@@ -434,6 +436,7 @@ Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrit
 
 | Date | Item(s) | What changed | Notes |
 |---|---|---|---|
+| 2026-10-29 | F8, F7 | The Analysis page now stores only resume/analysis ids and reloads the report from `GET /resumes/{resume_id}/analyses/{analysis_id}` (ownership-checked, 404 for cross-resume/unknown ids), with a loading state and React-state updates after keyword/rewrite confirmations. Dashboard/Upload write the ids; Dashboard's "View latest report" opens the newest analyzed file. The Figma Make scaffold is gone: package renamed to `ats-resume-optimizer`, `vite.config.ts` reduced to React + Tailwind, real `index.html` metadata, `.figma/` removed, `AGENTS.md` rewritten, static `robots.txt` added. Also fixed the B8 improvement projection so its after-score uses the same required/preferred weights as the before-score. | 279 backend tests pass (4 new analysis-fetch tests); `bun run build` clean. Counts: F 13 → 15, total 64 → 66. |
 | 2026-10-29 | A8, A9, A11 | The grammar checker now extracts words before filtering, so punctuation no longer hides them ("recieve," / "(seperate)" are caught), known skill/acronym vocabulary is ignored, and the 10-typo cap is gone. A proper-noun guard (skip all-caps/mixed-case, only check capitalized words at sentence start) removed 19 false positives on a real resume without hiding sentence-start typos. Bullet metrics now ignore phone-like digit runs (at least 7 digits, with spaces/dots/parens/dashes) while keeping real metrics in the same bullet. A9 is closed: its rewritten regex plus A16/A11 cover single-digit quantities, versions/years, decimals, and phones. | 275 backend tests pass (14 new: `test_grammar_checker.py` + 2 phone tests); `bun run build` clean. Counts: A 19 → 22, total 61 → 64 (F corrected to 13/17). |
 | 2026-10-29 | B7, B8 | The keyword score now respects how a job asks for each skill: D2's required / preferred / other buckets weight recognized skills 3× / 2× / 1×, so a missing must-have costs more than a missing nice-to-have. Each `keyword_details` entry reports its `importance`, and results carry `weighted` (false for pre-D2 jobs, which keep the old plain coverage). The noisy two-document TF-IDF cosine (`similarity`) was removed entirely — with only two documents IDF carries almost no signal — and `scikit-learn` was dropped from `requirements.txt`; the weighted coverage score is now the single coverage number. The UI explains the weighting and counts missing required/preferred skills. | 261 backend tests pass (5 engine weighting tests + 1 service test proving the buckets are forwarded); `bun run build` clean. Counts: B 7 → 9, total 59 → 61. |
 | 2026-10-29 | A5 | Closed by C6: the review card offers "Use this" on both the moderate and aggressive variant, and the exporter applies the accepted text instead of only `ai_output`. No separate per-bullet picker is needed. | Roadmap-only entry; behavior shipped with C6 and verified by its tests. Counts: A 18 → 19, total 57 → 58. |

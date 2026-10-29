@@ -121,7 +121,7 @@ export default function Dashboard({ navigate, addToast }: PageProps) {
 
   const openReport = (f: RecentFile) => {
     if (!f.analysis) { addToast("error", "This resume has no analysis yet — run one from the Upload page."); return }
-    api.saveLastAnalysis({ ...f.analysis, resume_id: f.id, report: f.analysis.report ?? {} })
+    api.saveLastAnalysisId(f.analysis.id)
     api.saveLastResumeId(f.id)
     api.saveLastResumeMeta(f.name, f.job === "General analysis" ? undefined : "Saved job description")
     navigate("analysis")
@@ -356,7 +356,7 @@ export default function Dashboard({ navigate, addToast }: PageProps) {
               <p className="font-semibold text-navy text-sm mb-3">Quick Actions</p>
               <div className="space-y-2">
                 {[
-                  { label: "View latest report", icon: BarChart2, action: () => navigate("analysis") },
+                  { label: "View latest report", icon: BarChart2, action: () => analyzed[0] ? openReport(analyzed[0]) : addToast("info", "No analyses yet — upload and analyze a resume first.") },
                   { label: "Upload new resume",   icon: Upload,    action: () => navigate("upload") },
                   { label: "Add job description", icon: Briefcase, action: () => navigate("jobs") },
                 ].map((a, i) => (

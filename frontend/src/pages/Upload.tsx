@@ -56,7 +56,7 @@ export default function UploadPage({ navigate, addToast }: PageProps) {
     addToast("info", "Analyzing your resume against the selected job description…")
     try {
       const analysis = await api.analyzeResume(uploaded.id, activeJobId)
-      api.saveLastAnalysis(analysis); api.saveLastResumeId(uploaded.id)
+      api.saveLastAnalysisId(analysis.id); api.saveLastResumeId(uploaded.id)
       api.saveLastResumeMeta(uploaded.name, jobs.find(job => job.id === activeJobId)?.title)
       navigate("analysis")
     } catch (error) { addToast("error", error instanceof Error ? error.message : "Could not analyze resume") }
@@ -201,7 +201,7 @@ export default function UploadPage({ navigate, addToast }: PageProps) {
                 <div className="flex items-center gap-1.5">
                   {r.latest_analysis && <span className="text-xs text-mid mr-2 hidden sm:block">ATS: <ScorePip score={r.latest_analysis.ats_score} /></span>}
                   <button
-                    onClick={() => { if (r.latest_analysis) { api.saveLastResumeId(r.id); navigate("analysis") } else addToast("info", "Analyze this resume first") }}
+                    onClick={() => { if (r.latest_analysis) { api.saveLastResumeId(r.id); api.saveLastAnalysisId(r.latest_analysis.id); navigate("analysis") } else addToast("info", "Analyze this resume first") }}
                     className="p-2 rounded-lg text-mid hover:text-teal hover:bg-teal/10 transition-colors"
                     title="View Analysis"
                   >

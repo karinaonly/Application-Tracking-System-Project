@@ -230,11 +230,14 @@ class ImprovementScoringTests(unittest.TestCase):
         self.assertEqual(imp["after"]["keywords"], 100.0)
 
     def test_job_skill_buckets_are_forwarded_to_keyword_engine(self):
-        """B8: D2's required/preferred buckets must reach the keyword engine."""
+        """B8: D2's required/preferred buckets must reach every keyword call,
+        including the after-score in the improvement projection."""
         owner_id = uuid4()
         resume = self._make_resume(owner_id)
         self._mock_analyzers(40.0, 85.0)
-        self.service.ai.rewrite_bullets.return_value = {}
+        self.service.ai.rewrite_bullets.return_value = {
+            "Did tasks for the team": {"ai_output": "Led 5-member team with Docker"},
+        }
 
         job_id = uuid4()
         job = JobDescription(
@@ -251,9 +254,58 @@ class ImprovementScoringTests(unittest.TestCase):
 
         self.service.analyze(resume.id, owner_id, job_id)
 
-        _, kwargs = self.service.kw_engine.analyze.call_args
-        self.assertEqual(kwargs["required_skills"], ["Docker"])
-        self.assertEqual(kwargs["preferred_skills"], ["Python"])
+        calls = self.service.kw_engine.analyze.call_args_list
+        self.assertGreaterEqual(len(calls), 2)  # before + after the rewrite
+        for _, kwargs in calls:
+            self.assertEqual(kwargs["required_skills"], ["Docker"])
+            self.assertEqual(kwargs["preferred_skills"], ["Python"])
+
+
+class GetAnalysisTests(unittest.TestCase):
+    """F8: the UI reloads one analysis by id after a refresh."""
+
+    def setUp(self):
+        self.service = ResumeService(MagicMock())
+
+    def _wire(self, resume, analysis):
+        self.service.session.get.side_effect = lambda model, _id: (
+            resume if model is Resume else analysis if model is ResumeAnalysis else None
+        )
+
+    def test_returns_the_requested_analysis(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        analysis = ResumeAnalysis(id=uuid4(), resume_id=resume.id, report={"ok": True})
+        self._wire(resume, analysis)
+
+        result = self.service.get_analysis(resume.id, analysis.id, owner_id)
+
+        self.assertIs(result, analysis)
+
+    def test_another_users_resume_is_rejected(self):
+        resume = make_resume(uuid4())
+        analysis = ResumeAnalysis(id=uuid4(), resume_id=resume.id)
+        self._wire(resume, analysis)
+
+        with self.assertRaises(ResumeNotFoundError):
+            self.service.get_analysis(resume.id, analysis.id, uuid4())
+
+    def test_analysis_from_another_resume_is_rejected(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        other_analysis = ResumeAnalysis(id=uuid4(), resume_id=uuid4())
+        self._wire(resume, other_analysis)
+
+        with self.assertRaises(AnalysisNotFoundError):
+            self.service.get_analysis(resume.id, other_analysis.id, owner_id)
+
+    def test_missing_analysis_is_rejected(self):
+        owner_id = uuid4()
+        resume = make_resume(owner_id)
+        self._wire(resume, None)
+
+        with self.assertRaises(AnalysisNotFoundError):
+            self.service.get_analysis(resume.id, uuid4(), owner_id)
 
 
 class ExportAnalysisSelectionTests(unittest.TestCase):

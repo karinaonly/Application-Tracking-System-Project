@@ -297,14 +297,18 @@ export async function exportVersion(
   return response.blob()
 }
 
-export function saveLastAnalysis(analysis: ResumeAnalysis): void {
-  sessionStorage.setItem("ats_last_analysis", JSON.stringify(analysis))
+// F8: the Analysis page stores only ids and reloads the report from the API,
+// so a refresh keeps the same analysis instead of trusting a serialized copy.
+export async function getAnalysis(resumeId: string, analysisId: string): Promise<ResumeAnalysis> {
+  return request<ResumeAnalysis>(`/resumes/${resumeId}/analyses/${analysisId}`)
 }
 
-export function getLastAnalysis(): ResumeAnalysis | null {
-  const raw = sessionStorage.getItem("ats_last_analysis")
-  if (!raw) return null
-  try { return JSON.parse(raw) as ResumeAnalysis } catch { return null }
+export function saveLastAnalysisId(id: string): void {
+  sessionStorage.setItem("ats_last_analysis_id", id)
+}
+
+export function getLastAnalysisId(): string | null {
+  return sessionStorage.getItem("ats_last_analysis_id")
 }
 
 export function saveLastResumeId(id: string): void {

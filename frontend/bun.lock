@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "figma-make-app",
+      "name": "ats-resume-optimizer",
       "dependencies": {
         "lucide-react": "^1.48.0",
         "react": "^19.0.0",
