@@ -1,5 +1,5 @@
 import re
-from app.common.constants import STRONG_ACTION_VERBS, WEAK_VERBS, WEAK_TO_STRONG
+from app.common.constants import WEAK_VERBS, WEAK_TO_STRONG, is_strong_action_verb
 from app.common.skills import HARD_SKILLS
 
 _BULLET_PREFIX_RE = re.compile(r"^[\s•▪▸►◆○●\-–—*]+")
@@ -138,7 +138,7 @@ class BulletAnalyzer:
         suggestion = ""
 
         weak_match = _WEAK_START_RE.match(text)
-        if first_clean in STRONG_ACTION_VERBS:
+        if is_strong_action_verb(first_clean):
             verb_type = "strong"
         elif weak_match:
             verb_type = "weak"

@@ -29,9 +29,10 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   *Fix:* use word-boundary regex and only check the start of the bullet.
   ✅ *Done 2026-09-28: Word-boundary match, only at start of bullet.*
 
-- [ ] **A2 (P1): Strong-verb list too small** · `common/constants.py`, `bullet_analyzer.py`
+- [x] **A2 (P1): Strong-verb list too small** · `common/constants.py`, `bullet_analyzer.py`
   "Wrote", "Maintained", and similar verbs return `missing`.
   *Fix:* expand the list, or lemmatize the first word with spaCy ("wrote" → "write").
+  ✅ *Done 2026-10-29: expanded the list with ~100 common resume verbs and added deterministic morphology (`is_strong_action_verb`) instead of a spaCy dependency: base/gerund/past forms resolve (`maintain` → `maintained`/`maintaining`), regular `-ed/-ing` endings are stripped with doubled-consonant and silent-`e` handling, and irregular past forms (`wrote`, `led`, `ran`, `oversaw`, …) map to their base. Weak verbs stay weak, and unrelated `-ed` words ("considered", "used") are not promoted. Verified by 20 bullet-analyzer tests (12 previously-missing verbs now strong).*
 
 - [x] **A3 (P0): Missing keywords never reach the exported resume** · `export/docx_exporter.py`
   `export_tailored` accepts `missing_keywords`, but `_add_skills` ignores them and `_filter_keywords` is never called.
@@ -408,13 +409,13 @@ Counts verified against the item list on 2026-10-23. (F14 is unused; numbering j
 
 | Section | Items | Done |
 |---|---|---|
-| A. Bugs | 22 | 17 |
+| A. Bugs | 22 | 18 |
 | B. Scoring | 11 | 7 |
 | C. AI Rewriter | 13 | 12 |
 | D. Features | 8 | 3 |
 | E. Security & Config | 6 | 4 |
 | F. Hygiene | 17 | 12 |
-| **Total** | **77** | **55** |
+| **Total** | **77** | **56** |
 
 Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrites from Groq, no fallbacks), A13 (a real resume export keeps its tech spellings), E1 (empty `JWT_SECRET` aborts startup), E2 (allowed preflight 200 / foreign origin 400), and E5 (zero SQL-echo lines in the live log). A14's new certifications/languages sections are fixture-tested because the current real resume has neither; A19 is build-verified but still needs a UI click-through to become 🟢. The rest of the C section remains unit-tested only (🟡) until each item is exercised individually.
 
@@ -424,6 +425,7 @@ Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrit
 
 | Date | Item(s) | What changed | Notes |
 |---|---|---|---|
+| 2026-10-29 | A2 | Strong-verb detection no longer misses ordinary resume verbs. The curated list grew by ~100 verbs, and a small deterministic morphology (`is_strong_action_verb`) recognizes base/past/gerund forms — regular `-ed/-ing` stripping with doubled-consonant and silent-`e` handling, plus irregular past forms (`wrote`, `led`, `ran`, `oversaw`, …). No spaCy dependency. Weak verbs and unrelated `-ed` words stay unclassified. | 248 backend tests pass (4 new covering 12 previously-missing verbs, base/gerund forms, weak verbs, and false positives). Counts: A 17 → 18, total 55 → 56. |
 | 2026-10-29 | C5, F6 | Analyzers and the AI client are now process-wide instead of rebuilt per request. `ResumeService` pulls its extractor, section parser, ATS checker, keyword engine, bullet analyzer, grammar checker, `AIRewriter` (and its OpenAI client/config), and exporter from a lazy `@lru_cache`; `clear_shared_components()` resets it for tests. The grammar `SpellChecker` load and AI client setup are paid once. | 244 backend tests pass (3 new: shared instances, single `AIRewriter` construction, cache reset). Full suite dropped from ~19s to ~10s. Counts: C 11 → 12, F 11 → 12, total 53 → 55. |
 | 2026-10-29 | A6, A7 | Uploads are no longer trusted: the client filename is used only to derive a validated extension, and files are stored as `{upload_dir}/{user_id}/{uuid}{ext}` with a separately sanitized display name (basename, control/reserved characters stripped, `resume` fallback, length cap). The configured `allowed_extensions` and `max_file_size_mb` are now enforced before parsing or writing — unsupported/extensionless → 400 listing allowed types, empty → 400, oversized → 413 with the limit — and reads stop at `max + 1` bytes so a huge upload is never loaded whole. | 241 backend tests pass (11 new upload tests covering `../` and `..\..` traversal, same-name collisions, extension case, empty/oversized/extensionless files). Counts: A 15 → 17, total 51 → 53. |
 | 2026-10-29 | C6 | AI rewrites now require explicit review before they can reach the export. New `rewrite-decisions` endpoint stores accept/reject/edit per original bullet (merged one card at a time; "pending" clears a decision), and a fresh analysis applies none — the export keeps the original bullets until the user accepts something. Placeholders (`[X]`), unknown originals, and empty/oversized text are rejected with 400, and the exporter refuses placeholder text even if it slips through; it now also accepts the plain-string rewrite shape while still reading pre-C6 `{"ai_output": ...}` maps. D3 versions are built from accepted rewrites only (button disabled until one is accepted). UI adds "Use this" / "Keep my original" / inline edit + undo per suggestion, an accepted counter, and an export-bar line stating how many rewrites the download will use. Verified live: accept → text in DOCX, unknown original → 400, `[X]` → 400, revert → original bullets. | 230 backend tests pass (15 new); `bun run build` clean. Counts: C 10 → 11, total 50 → 51. |

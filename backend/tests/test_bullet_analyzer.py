@@ -44,6 +44,52 @@ class WeakVerbTests(unittest.TestCase):
         self.assertIn("Managed", r["suggestion"])
 
 
+class StrongVerbCoverageTests(unittest.TestCase):
+    """A2: common resume verbs are recognized in past/gerund/base form."""
+
+    def test_previously_missing_past_tense_verbs(self):
+        for text in (
+            "Wrote automated tests for the payments service",
+            "Maintained CI pipelines and release tooling",
+            "Documented the public API and onboarding flow",
+            "Shipped the billing module two weeks early",
+            "Resolved 30 production incidents",
+            "Debugged flaky integration tests",
+            "Oversaw the database migration",
+            "Ran load tests against the checkout API",
+            "Built and owned the internal dashboard",
+            "Customized the reporting workflow for each client",
+            "Validated incoming data before ingestion",
+            "Scheduled nightly backups",
+        ):
+            self.assertEqual(vt(text), "strong", text)
+
+    def test_base_and_gerund_forms(self):
+        self.assertEqual(vt("Write unit tests for new endpoints"), "strong")
+        self.assertEqual(vt("Maintaining the deployment pipeline"), "strong")
+        self.assertEqual(vt("Documenting the migration steps"), "strong")
+
+    def test_weak_verbs_are_still_weak(self):
+        for text in (
+            "Helped the team migrate services",
+            "Assisted with customer onboarding",
+            "Handled daily support tickets",
+            "Made updates to the landing page",
+            "Worked on the billing module",
+            "Participated in sprint planning",
+        ):
+            self.assertEqual(vt(text), "weak", text)
+
+    def test_unrelated_ed_words_are_not_strong(self):
+        for text in (
+            "Considered alternative approaches for the cache",
+            "Used a shared component library",
+            "Embedded analytics in the admin panel",  # strong via "embed"
+        ):
+            expected = "strong" if text.startswith("Embedded") else "missing"
+            self.assertEqual(vt(text), expected, text)
+
+
 class NoBulletsTests(unittest.TestCase):
     # --- B2 ---
     def test_zero_bullets_is_not_a_perfect_score(self):
