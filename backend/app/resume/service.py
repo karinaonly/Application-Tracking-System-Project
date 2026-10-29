@@ -1,10 +1,11 @@
 from sqlmodel import Session, select
-from uuid import UUID
+from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from fastapi import UploadFile, HTTPException
 import os
 import re
 
+from app.config.settings import get_settings
 from app.resume.models import Resume, ResumeAnalysis, ResumeVersion
 from app.jobs.models import JobDescription
 from app.parser.text_extractor import TextExtractor
@@ -47,15 +48,46 @@ class ResumeService:
         if not file.filename:
             raise HTTPException(status_code=400, detail="File name is required")
 
-        filename = file.filename
-        ext = f".{filename.split('.')[-1].lower()}"
-        file_bytes = file.file.read()
+        settings = get_settings()
+        # A6: never trust the client's filename as a path. Only the extension
+        # is kept (validated against the allowlist); the file is stored under a
+        # random name inside the user's own upload directory. The display name
+        # is sanitized separately so traversal sequences cannot reach the UI.
+        ext = os.path.splitext(file.filename)[1].lower()
+        allowed = [e.lower() for e in settings.allowed_extensions]
+        if ext not in allowed:
+            shown = ext or "no extension"
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unsupported file type ({shown}). "
+                    f"Allowed types: {', '.join(allowed)}."
+                ),
+            )
 
+        # A7: enforce the configured size cap before parsing or writing. Read
+        # one byte past the limit so an oversized upload is rejected without
+        # ever loading the whole file into memory.
+        max_bytes = settings.max_file_size_mb * 1024 * 1024
+        file_bytes = file.file.read(max_bytes + 1)
+        if len(file_bytes) > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"File is too large. The maximum size is "
+                    f"{settings.max_file_size_mb} MB."
+                ),
+            )
+        if not file_bytes:
+            raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+
+        filename = self._safe_display_name(file.filename, ext)
         extracted = self.extractor.extract(file_bytes, ext)
         parsed = self.sec_parser.parse(extracted["raw_text"])
 
-        os.makedirs(f"./uploads/{user_id}", exist_ok=True)
-        path = f"./uploads/{user_id}/{filename}"
+        user_dir = os.path.join(settings.upload_dir, str(user_id))
+        os.makedirs(user_dir, exist_ok=True)
+        path = os.path.join(user_dir, f"{uuid4().hex}{ext}")
         with open(path, "wb") as f:
             f.write(file_bytes)
 
@@ -71,6 +103,18 @@ class ResumeService:
         self.session.commit()
         self.session.refresh(resume)
         return resume
+
+    @staticmethod
+    def _safe_display_name(name: str, ext: str) -> str:
+        """Strip directories/control characters so only a safe label remains."""
+        base = os.path.basename(name.replace("\\", "/")).strip()
+        base = re.sub(r"[\x00-\x1f\x7f]", "", base)
+        base = re.sub(r"\s+", " ", base)
+        stem = os.path.splitext(base)[0].strip(" .")
+        stem = re.sub(r"[<>:\"/\\|?*]", "", stem).strip(" .")
+        if len(stem) > 100:
+            stem = stem[:100].rstrip(" .")
+        return f"{stem or 'resume'}{ext}"
 
     def analyze(self, resume_id: UUID, user_id: UUID, job_id: UUID | None = None) -> ResumeAnalysis:
         resume = self.session.get(Resume, resume_id)

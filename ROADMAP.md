@@ -49,13 +49,15 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   `_apply_rewrites` only reads `ai_output` (the moderate version).
   *Fix:* let the user choose moderate or aggressive per bullet.
 
-- [ ] **A6 (P1): Upload path traversal risk** · `resume/service.py`
+- [x] **A6 (P1): Upload path traversal risk** · `resume/service.py`
   The raw client `filename` is used in the file path.
   *Fix:* sanitize the filename, or store as `{uuid}{ext}`.
+  ✅ *Done 2026-10-29: the client filename is never used as a path. Only its validated extension is kept; the file is written as `{upload_dir}/{user_id}/{uuid}{ext}`, and the stored display name is a basename with directories, control characters, and reserved characters stripped (with a `resume` fallback and length cap). Covered by traversal tests for both `../../` and `..\..\` names.*
 
-- [ ] **A7 (P1): Upload limits not enforced** · `resume/service.py`, `config/settings.py`
+- [x] **A7 (P1): Upload limits not enforced** · `resume/service.py`, `config/settings.py`
   `max_file_size_mb` and `allowed_extensions` exist but are never checked.
   *Fix:* validate extension and size before processing, and return clear 400/413 errors.
+  ✅ *Done 2026-10-29: the configured allowlist and size cap are enforced before parsing or writing. Unsupported/extensionless files return 400 listing the allowed types, empty files return 400, and oversized files return 413 with the configured limit; the file is read at most `max + 1` bytes so a huge upload is rejected without being loaded whole. Covered by 11 upload tests.*
 
 - [ ] **A8 (P2): Grammar checker skips most words** · `analyzer/grammar_checker.py`
   It filters with `w.isalpha()` *before* stripping punctuation, so words like "system," or "(API)" are skipped. It also caps output at 10 typos.
@@ -404,13 +406,13 @@ Counts verified against the item list on 2026-10-23. (F14 is unused; numbering j
 
 | Section | Items | Done |
 |---|---|---|
-| A. Bugs | 22 | 15 |
+| A. Bugs | 22 | 17 |
 | B. Scoring | 11 | 7 |
 | C. AI Rewriter | 13 | 11 |
 | D. Features | 8 | 3 |
 | E. Security & Config | 6 | 4 |
 | F. Hygiene | 17 | 11 |
-| **Total** | **77** | **51** |
+| **Total** | **77** | **53** |
 
 Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrites from Groq, no fallbacks), A13 (a real resume export keeps its tech spellings), E1 (empty `JWT_SECRET` aborts startup), E2 (allowed preflight 200 / foreign origin 400), and E5 (zero SQL-echo lines in the live log). A14's new certifications/languages sections are fixture-tested because the current real resume has neither; A19 is build-verified but still needs a UI click-through to become 🟢. The rest of the C section remains unit-tested only (🟡) until each item is exercised individually.
 
@@ -420,6 +422,7 @@ Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrit
 
 | Date | Item(s) | What changed | Notes |
 |---|---|---|---|
+| 2026-10-29 | A6, A7 | Uploads are no longer trusted: the client filename is used only to derive a validated extension, and files are stored as `{upload_dir}/{user_id}/{uuid}{ext}` with a separately sanitized display name (basename, control/reserved characters stripped, `resume` fallback, length cap). The configured `allowed_extensions` and `max_file_size_mb` are now enforced before parsing or writing — unsupported/extensionless → 400 listing allowed types, empty → 400, oversized → 413 with the limit — and reads stop at `max + 1` bytes so a huge upload is never loaded whole. | 241 backend tests pass (11 new upload tests covering `../` and `..\..` traversal, same-name collisions, extension case, empty/oversized/extensionless files). Counts: A 15 → 17, total 51 → 53. |
 | 2026-10-29 | C6 | AI rewrites now require explicit review before they can reach the export. New `rewrite-decisions` endpoint stores accept/reject/edit per original bullet (merged one card at a time; "pending" clears a decision), and a fresh analysis applies none — the export keeps the original bullets until the user accepts something. Placeholders (`[X]`), unknown originals, and empty/oversized text are rejected with 400, and the exporter refuses placeholder text even if it slips through; it now also accepts the plain-string rewrite shape while still reading pre-C6 `{"ai_output": ...}` maps. D3 versions are built from accepted rewrites only (button disabled until one is accepted). UI adds "Use this" / "Keep my original" / inline edit + undo per suggestion, an accepted counter, and an export-bar line stating how many rewrites the download will use. Verified live: accept → text in DOCX, unknown original → 400, `[X]` → 400, revert → original bullets. | 230 backend tests pass (15 new); `bun run build` clean. Counts: C 10 → 11, total 50 → 51. |
 | 2026-10-28 | A3 (placement fix) | Live export review caught a misplacement: confirmed "OOP" rendered as "DevOps & Tools: …, Object-Oriented Programming". Cause: `Object-Oriented Programming` was in the `Process & Tools` category, whose label keywords include the generic word "tools" — so any "…& Tools" resume line matched. Paradigms/methodologies now live in a new `Concepts` category (OOP, Design Patterns, System Design, Agile, Scrum, Kanban) whose label keywords contain no generic "tools"; `Cloud & DevOps` no longer claims "tools"/"tooling" either (it still matches "DevOps & Tools" via "devops"). Real tools (Figma, Jira, Confluence, Swagger) stay in `Process & Tools` and still fold into a "…& Tools" line. Verified live on analysis `ce95069e…`: the DevOps line is unchanged and OOP now lands on a fallback "Additional Skills: Object-Oriented Programming" line. | 215 backend tests pass (4 new: taxonomy + exporter placement). Counts unchanged: total 50. |
 | 2026-10-28 | A4 | The exporter no longer overwrites your professional title with the job posting's. Root cause was upstream: the parser discarded the header's title line (neither name nor contact field), so the exporter had to invent one — the job's title, or a hardcoded "FULL STACK DEVELOPER". New `common/headline.py` extracts a role-shaped header line (rejecting emails/URLs/phones/cities/degrees) into `contact_parsed["title"]`, and the exporter re-derives it from `contact.raw` for already-stored resumes. Exports now show the resume's own title by default; the job's title is used only when the user ticks the new (unchecked) "Match my title to this job" checkbox, which passes `match_title=true` to either export endpoint. No title is fabricated when the resume has none, and version filenames only use the job title when the document does. Also removed the silent "Aspiring " strip from the summary and replaced the hardcoded `LABEL_RE`/peel regex with configurable `LAYOUT_LABELS` / `LAYOUT_PREFIX_LABELS`. Verified live: analysis `b2e38c82…` (job "ASSOCIATE SOFTWARE ENGINEER") exports "FULL STACK DEVELOPER" by default, job title only on opt-in. | 211 backend tests pass (14 new); `bun run build` clean. Counts: A 14 → 15, total 49 → 50. |
