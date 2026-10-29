@@ -46,9 +46,10 @@ Snapshot reviewed: full source tree (backend + frontend), 2026-10-23. Original s
   *Fix (original, narrower scope):* remove the hardcoded replace, and make label filtering configurable or generic.
   ✅ *Done 2026-10-28 (option b, chosen by the user): the resume's own title wins, and matching the job's title is an explicit per-export checkbox.* Root cause: the parser threw the title away — `_parse_contact` treated the "FULL STACK DEVELOPER" line as neither name nor contact field, so the exporter had nothing real to print. New `common/headline.py` (`extract_headline`, `looks_like_headline`) reads a short role-shaped line out of the header, rejecting emails/URLs/phones/cities/degrees; `contact_parsed["title"]` now stores it, and the exporter also derives it from `contact.raw` at export time so **already-stored resumes** (which predate the field) export correctly without re-uploading. `_add_header` prints the resume's own title by default, the job title only when `match_title=true` (new query param on both export endpoints, unchecked checkbox "Match my title to this job" in the sticky export bar), and **no title at all** instead of a fabricated one when the resume has none — the hardcoded `"FULL STACK DEVELOPER"` fallback is gone. Version filenames now use the job title only when the document actually does. Also removed the silent `.replace("Aspiring ", "")` on the summary (your own words are no longer edited behind your back), and replaced the hardcoded `LABEL_RE`/prefix-peel regex with configurable `LAYOUT_LABELS` / `LAYOUT_PREFIX_LABELS` sets (`_is_layout_label`, `_peel_layout_label`) so another template can extend them instead of patching a pattern. Verified live: analysis `b2e38c82…` (job "ASSOCIATE SOFTWARE ENGINEER") exports `FULL STACK DEVELOPER` by default and the job title only when opted in. 211 backend tests (14 new), `bun run build` clean.
 
-- [ ] **A5 (P2): Aggressive rewrite is never used** · `export/docx_exporter.py`
+- [x] **A5 (P2): Aggressive rewrite is never used** · `export/docx_exporter.py`
   `_apply_rewrites` only reads `ai_output` (the moderate version).
   *Fix:* let the user choose moderate or aggressive per bullet.
+  ✅ *Done 2026-10-29 as part of C6: each suggestion card now has a "Use this" button on both the moderate and aggressive variant, and the accepted (or edited) text is what the exporter applies — it no longer reads only `ai_output`. No separate picker was needed because the C6 review step is the choice.*
 
 - [x] **A6 (P1): Upload path traversal risk** · `resume/service.py`
   The raw client `filename` is used in the file path.
@@ -410,13 +411,13 @@ Counts verified against the item list on 2026-10-23. (F14 is unused; numbering j
 
 | Section | Items | Done |
 |---|---|---|
-| A. Bugs | 22 | 18 |
+| A. Bugs | 22 | 19 |
 | B. Scoring | 11 | 7 |
 | C. AI Rewriter | 13 | 12 |
 | D. Features | 8 | 4 |
 | E. Security & Config | 6 | 4 |
 | F. Hygiene | 17 | 12 |
-| **Total** | **77** | **57** |
+| **Total** | **77** | **58** |
 
 Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrites from Groq, no fallbacks), A13 (a real resume export keeps its tech spellings), E1 (empty `JWT_SECRET` aborts startup), E2 (allowed preflight 200 / foreign origin 400), and E5 (zero SQL-echo lines in the live log). A14's new certifications/languages sections are fixture-tested because the current real resume has neither; A19 is build-verified but still needs a UI click-through to become 🟢. The rest of the C section remains unit-tested only (🟡) until each item is exercised individually.
 
@@ -426,6 +427,7 @@ Re-verified end-to-end with real data on 2026-10-26: A12 and C3 (6/6 live rewrit
 
 | Date | Item(s) | What changed | Notes |
 |---|---|---|---|
+| 2026-10-29 | A5 | Closed by C6: the review card offers "Use this" on both the moderate and aggressive variant, and the exporter applies the accepted text instead of only `ai_output`. No separate per-bullet picker is needed. | Roadmap-only entry; behavior shipped with C6 and verified by its tests. Counts: A 18 → 19, total 57 → 58. |
 | 2026-10-29 | D4 (remainder) | URL import now extracts the real employer from the page's schema.org `JobPosting` JSON-LD (`hiringOrganization`, dict/string, `@graph` supported) instead of writing "Extracted from web". With no schema the company stays empty and the UI shows "Company not provided" — no invented name. The visible `<h1>` is captured before `<header>` is stripped, fixing headlines that were previously lost, with the JSON-LD title as fallback; malformed JSON-LD is ignored. | 255 backend tests pass (7 new mocked-HTTP tests). Counts: D 3 → 4, total 56 → 57. |
 | 2026-10-29 | A2 | Strong-verb detection no longer misses ordinary resume verbs. The curated list grew by ~100 verbs, and a small deterministic morphology (`is_strong_action_verb`) recognizes base/past/gerund forms — regular `-ed/-ing` stripping with doubled-consonant and silent-`e` handling, plus irregular past forms (`wrote`, `led`, `ran`, `oversaw`, …). No spaCy dependency. Weak verbs and unrelated `-ed` words stay unclassified. | 248 backend tests pass (4 new covering 12 previously-missing verbs, base/gerund forms, weak verbs, and false positives). Counts: A 17 → 18, total 55 → 56. |
 | 2026-10-29 | C5, F6 | Analyzers and the AI client are now process-wide instead of rebuilt per request. `ResumeService` pulls its extractor, section parser, ATS checker, keyword engine, bullet analyzer, grammar checker, `AIRewriter` (and its OpenAI client/config), and exporter from a lazy `@lru_cache`; `clear_shared_components()` resets it for tests. The grammar `SpellChecker` load and AI client setup are paid once. | 244 backend tests pass (3 new: shared instances, single `AIRewriter` construction, cache reset). Full suite dropped from ~19s to ~10s. Counts: C 11 → 12, F 11 → 12, total 53 → 55. |
